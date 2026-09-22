@@ -14,6 +14,7 @@ from app.services.parsed_document_service import ParsedDocumentService
 from app.services.validation_service import ValidationService
 from app.services.chunking_service import ChunkingService
 from app.services.embedding_service import EmbeddingService
+from app.vectorstore.bm25_service import BM25Service
 from app.vectorstore.faiss_service import FAISSService
 
 
@@ -100,6 +101,14 @@ class DocumentService:
                 document_folder
             )
 
+            # BM25's idf/avgdl depend on the whole corpus, so there's
+            # no incremental add -- rebuild from every document's
+            # chunks.json (see BM25Service for why that's fine at
+            # this scale).
+            BM25Service.rebuild_index(
+                Path(settings.DOCUMENTS_DIR)
+            )
+
             metadata.status = "indexed"
 
         except Exception as e:
@@ -180,3 +189,4 @@ class DocumentService:
         shutil.rmtree(document_folder)
 
         FAISSService.rebuild_index(Path(settings.DOCUMENTS_DIR))
+        BM25Service.rebuild_index(Path(settings.DOCUMENTS_DIR))

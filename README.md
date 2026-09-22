@@ -67,7 +67,9 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 - **No streaming in the UI yet.** The `/chat/stream` endpoint exists; the frontend isn't wired to it.
 - **No markdown rendering in the chat UI.**
-- **Retrieval is dense-only.** No BM25/hybrid search, no reranker yet.
+- **No cross-encoder reranker yet.** Retrieval is hybrid (BM25 + dense,
+  RRF-fused, measured to match or beat dense-only — see `backend/eval/README.md`),
+  but nothing re-scores the fused candidates with a stronger model.
 - **No OCR fallback** — scanned (image-only) PDFs will parse to near-empty text.
 - **No table/chart/image understanding** — Docling extracts tables as markdown text; nothing structures or reasons over them specially yet.
 - **No conversation memory** — each question is answered independently of chat history.
@@ -85,20 +87,29 @@ This section is deliberately blunt — see it as the project's honest changelog.
   RAM or reduce concurrent load; a proper fix (ingestion in an isolated worker
   process) is on the roadmap.
 - **Evaluation harness exists but is small and single-document.** See
-  `backend/eval/` — a 15-question seed set with retrieval (Recall@k, MRR) and
-  generation (keyword-hit, refusal-rate) metrics. Baseline: Recall@5=91.7%,
-  generation keyword-hit=100%, but manual review of that same run found two
-  real answer-quality issues and one grounding risk that the automated
-  metrics missed (see `backend/eval/README.md`'s "Known result" section) —
-  a good illustration of why the harness explicitly warns against trusting
-  its summary numbers without reading `per_question`. Needs expanding to
-  50+ questions across varied document types before it's a real benchmark.
+  `backend/eval/` — a 15-question seed set with retrieval (Recall@k, MRR,
+  and a dense/bm25/hybrid ablation via `--compare-modes`) and generation
+  (keyword-hit, refusal-rate) metrics. Hybrid retrieval measurably beats
+  dense-only (Recall@1 75%→91.7%, MRR 0.83→0.92, zero per-question
+  regressions) — but it is not a universal fix: one question is still
+  wrong in *every* retrieval mode because it shares no vocabulary with
+  the document at all, which no amount of fusion can invent. Manual
+  review of the generation run also found two real answer-quality issues
+  and one grounding risk the automated metrics missed. See
+  `backend/eval/README.md`'s "Known result" section for the full,
+  unvarnished writeup — the harness explicitly warns against trusting its
+  summary numbers without reading `per_question`, and that warning has
+  already caught a wrong claim once (an earlier draft of this project
+  assumed hybrid would fix the query above; it didn't, and the docs were
+  corrected once actually measured). Needs expanding to 50+ questions
+  across varied document types before it's a real benchmark.
 
 ## Roadmap
 
-Short-term priorities, roughly in order: expand the evaluation harness
-(more documents, more questions, LLM-as-judge for faithfulness), hybrid
-(BM25 + dense) retrieval with a cross-encoder reranker, inline citations
-with page-level source highlighting,
+Short-term priorities, roughly in order: a cross-encoder reranker on top
+of hybrid retrieval, query rewriting (to address the vocabulary-mismatch
+gap above), expanding the evaluation harness (more documents, more
+questions, LLM-as-judge for faithfulness), inline citations with
+page-level source highlighting,
 streaming + markdown in the UI, and a Docker Compose setup that works from a
 clean clone.

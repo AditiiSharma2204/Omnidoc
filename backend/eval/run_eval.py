@@ -52,7 +52,9 @@ def load_dataset() -> list[dict]:
 
 
 def run_retrieval_eval(
-    items: list[dict], top_k_values: list[int]
+    items: list[dict],
+    top_k_values: list[int],
+    mode: str | None = None,
 ) -> dict[int, AggregateResults]:
 
     max_k = max(top_k_values)
@@ -63,7 +65,7 @@ def run_retrieval_eval(
             continue
 
         retrieved = RetrievalService.search(
-            query=item["question"], top_k=max_k
+            query=item["question"], top_k=max_k, mode=mode
         )
         retrieved_texts = [r.text for r in retrieved]
         keywords = item["expected_keywords"]
@@ -157,6 +159,15 @@ def main():
         action="store_true",
         help="Also run full chat generation (slow; requires Ollama).",
     )
+    parser.add_argument(
+        "--compare-modes",
+        action="store_true",
+        help=(
+            "Run retrieval-only eval for dense, bm25 and hybrid "
+            "modes and print a comparison table (an ablation, not "
+            "just a single-mode report). Ignores --with-generation."
+        ),
+    )
     args = parser.parse_args()
 
     items = load_dataset()
@@ -173,6 +184,44 @@ def main():
     # Ollama reloads transparently (one-time delay) on the first
     # real generation call below, if --with-generation is set.
     LLMService.unload()
+
+    if args.compare_modes:
+        print("=== Retrieval ablation: dense vs bm25 vs hybrid ===")
+        print(f"{'mode':>8} | {'k':>4} | {'Recall@k':>10} | {'MRR':>8}")
+        comparison = {}
+        for mode in ("dense", "bm25", "hybrid"):
+            mode_results = run_retrieval_eval(items, args.top_k, mode=mode)
+            comparison[mode] = {
+                str(k): {
+                    "recall_at_k": mode_results[k].recall_at_k,
+                    "mrr": mode_results[k].mrr,
+                }
+                for k in args.top_k
+            }
+            for k in args.top_k:
+                agg = mode_results[k]
+                print(
+                    f"{mode:>8} | {k:>4} | {agg.recall_at_k:>10.2%} "
+                    f"| {agg.mrr:>8.3f}"
+                )
+
+        RESULTS_DIR.mkdir(exist_ok=True)
+        out_path = (
+            RESULTS_DIR
+            / f"ablation_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        out_path.write_text(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "comparison": comparison,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"\nFull comparison written to {out_path}")
+        return
 
     retrieval_results = run_retrieval_eval(items, args.top_k)
 

@@ -40,6 +40,17 @@ def wired_document_service(tmp_path, monkeypatch):
     from app.config.settings import settings
 
     monkeypatch.setattr(settings, "DOCUMENTS_DIR", str(tmp_path))
+    # BM25Service.rebuild_index isn't mocked below (unlike
+    # FAISSService.add_document) because it's cheap and pure-Python,
+    # so tests exercise the real thing. But it still WRITES to
+    # settings.VECTORSTORE_DIR -- without isolating this too, a test
+    # with no real chunks.json ends up deleting this machine's real
+    # bm25_index.pkl (rebuild_index treats an empty corpus as "no
+    # documents left" and removes the index files). Learned this the
+    # hard way: it actually happened once during development.
+    monkeypatch.setattr(
+        settings, "VECTORSTORE_DIR", str(tmp_path / "vectorstore")
+    )
 
     async def fake_validate(file):
         content = await file.read()

@@ -21,6 +21,9 @@ python -m eval.run_eval --with-generation
 
 # Report Recall@1/3/5 instead of the default
 python -m eval.run_eval --top-k 1 3 5
+
+# Ablation: dense vs bm25 vs hybrid retrieval, side by side
+python -m eval.run_eval --compare-modes
 ```
 
 ## What it measures
@@ -53,13 +56,33 @@ that read.
 
 ## Known result (baseline, one document, 2026-09-22)
 
-**Retrieval:** Recall@1=75%, Recall@3/5=91.7%, MRR=0.83. One
-reproducible gap: *"What is this person's name?"* misses at every k
-up to 5, because dense embedding similarity ranks a semantically-generic
-"Summary" chunk above the short chunk whose heading literally is the
-name. Exactly what you'd expect from dense-only retrieval on a short,
-low-context query — see the top-level README's roadmap (hybrid
-BM25 + dense retrieval) for the planned fix.
+**Retrieval ablation (dense vs bm25 vs hybrid), `--compare-modes`:**
+
+| mode   | Recall@1 | Recall@3 | Recall@5 | MRR   |
+|--------|----------|----------|----------|-------|
+| dense  | 75.0%    | 91.7%    | 91.7%    | 0.833 |
+| bm25   | 91.7%    | 91.7%    | 91.7%    | 0.917 |
+| hybrid | 91.7%    | 91.7%    | 91.7%    | 0.917 |
+
+Hybrid matches or beats dense-only at every k, with **zero
+per-question regressions** (checked by hand, not just the aggregate).
+On this seed set BM25 alone is actually the strongest single signal,
+because most questions are exact-term technical lookups (company
+names, tool names) that lexical search is naturally good at; hybrid
+ties it rather than losing anything by also blending in dense scores.
+
+**Important, and corrected from an earlier draft of this doc:** hybrid
+retrieval does **not** fix every miss. *"What is this person's name?"*
+is still wrong at every k in **all three modes** — dense ranks a
+generic "Summary" chunk above the short chunk whose heading is the
+name (as expected), but BM25 finds nothing either, because the query
+("what... person... name") shares zero vocabulary with the document
+(which never uses the word "name"). Hybrid can only fuse rankings that
+already contain some signal; it can't invent relevance neither
+retrieval mode found. This particular gap needs query rewriting/
+expansion, not better fusion — don't claim a fix you haven't measured,
+which is exactly the mistake an earlier version of this note made
+before the ablation was actually run.
 
 **Generation:** factual keyword-hit rate 100% (12/12), refusal rate on
 unanswerable questions 100% (3/3) — but reading `per_question` by hand

@@ -98,7 +98,7 @@ class TestDeduplication:
             _fake_metadata_lookup(entries),
         )
 
-        results = RetrievalService.search("skills?", top_k=5)
+        results = RetrievalService.search("skills?", top_k=5, mode="dense")
 
         assert len(results) == 1
         assert results[0].score == 0.9
@@ -146,7 +146,7 @@ class TestDeduplication:
             _fake_metadata_lookup(entries),
         )
 
-        results = RetrievalService.search("skills?", top_k=5)
+        results = RetrievalService.search("skills?", top_k=5, mode="dense")
 
         assert len(results) == 1
 
@@ -205,7 +205,7 @@ class TestDocumentFiltering:
         )
 
         results = RetrievalService.search(
-            "skills?", top_k=5, document_ids=["doc-b"]
+            "skills?", top_k=5, document_ids=["doc-b"], mode="dense"
         )
 
         assert len(results) == 1
@@ -262,6 +262,6 @@ class TestDocumentFiltering:
             _fake_metadata_lookup(entries),
         )
 
-        results = RetrievalService.search("skills?", top_k=5)
+        results = RetrievalService.search("skills?", top_k=5, mode="dense")
 
         assert {r.document_id for r in results} == {"doc-a", "doc-b"}
