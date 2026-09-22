@@ -1,4 +1,5 @@
 import json
+import time
 
 import requests
 
@@ -9,6 +10,23 @@ class LLMService:
     """
     Service responsible for interacting with the local Ollama server.
     """
+
+    # Ollama's llama-server subprocess can crash on its OWN CUDA
+    # initialization when a PyTorch process (e.g. this app's embedding/
+    # reranker models) is concurrently resident on this machine's
+    # Windows/WDDM + MX450 setup -- diagnosed directly, not guessed:
+    # the error is "llama-server process has terminated ... CUDA error:
+    # shared object initialization failed", it reproduces even with
+    # CUDA hidden from our own process (CUDA_VISIBLE_DEVICES=""), even
+    # with only ~2GB resident and >3GB system RAM free (so it is NOT
+    # primarily a memory-quantity problem), and even with only ONE
+    # torch model loaded (not specific to running both the embedder
+    # and reranker). It looks like a genuine driver-level race, not
+    # something this app can prevent -- but Ollama auto-respawns
+    # llama-server, and a 20s wait (measured directly) reliably lets
+    # that respawn succeed while the torch process stays resident.
+    MAX_RETRIES = 3
+    RETRY_BACKOFF_SECONDS = 20
 
     @classmethod
     def _options(cls, temperature: float) -> dict:
@@ -66,26 +84,50 @@ class LLMService:
         temperature: float = None,
     ) -> str:
 
-        response = requests.post(
-            f"{settings.OLLAMA_BASE_URL}/api/chat",
-            json={
-                "model": settings.LLM_MODEL_NAME,
-                "messages": cls._messages(system, user),
-                "options": cls._options(
-                    settings.LLM_TEMPERATURE
-                    if temperature is None
-                    else temperature
-                ),
-                "stream": False,
-            },
-            timeout=300,
-        )
+        payload = {
+            "model": settings.LLM_MODEL_NAME,
+            "messages": cls._messages(system, user),
+            "options": cls._options(
+                settings.LLM_TEMPERATURE
+                if temperature is None
+                else temperature
+            ),
+            "stream": False,
+        }
 
-        response.raise_for_status()
+        last_error = None
 
-        data = response.json()
+        for attempt in range(cls.MAX_RETRIES):
 
-        return data["message"]["content"].strip()
+            try:
+                response = requests.post(
+                    f"{settings.OLLAMA_BASE_URL}/api/chat",
+                    json=payload,
+                    timeout=300,
+                )
+                response.raise_for_status()
+
+                data = response.json()
+
+                return data["message"]["content"].strip()
+
+            except requests.exceptions.HTTPError as e:
+                # Only retry server-side (5xx) errors -- a 4xx means
+                # our request is wrong, and retrying it won't help.
+                status = e.response.status_code if e.response else None
+                if status is None or status < 500:
+                    raise
+                last_error = e
+
+            except requests.exceptions.ConnectionError as e:
+                # Ollama can be mid-restart/reload and refuse the
+                # connection outright, not just return a 5xx.
+                last_error = e
+
+            if attempt < cls.MAX_RETRIES - 1:
+                time.sleep(cls.RETRY_BACKOFF_SECONDS * (attempt + 1))
+
+        raise last_error
 
     @classmethod
     def stream(

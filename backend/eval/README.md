@@ -107,27 +107,77 @@ lexical nor dense retrieval has a way to bridge that gap, and
 reranking can't invent a candidate that never made the pool. This
 needs query rewriting (already on the roadmap), not a retrieval tweak.
 
-**Historical, from the original 1-document baseline (not yet re-run on
-the 5-document corpus — see below):** generation (`--with-generation`)
-scored 100% factual keyword-hit and 100% correct refusal, but manual
-review of `per_question` found real issues the automated metrics
-missed: one answer dropped a fact ("MongoDB") from a correctly
-retrieved chunk, one answer was genuinely garbled prose, and the name
-question was answered correctly despite retrieval missing the target
-chunk — most likely because the prompt's `Document: Aditii_Resume.pdf`
-line let the model infer the name from the filename rather than
-retrieved content, a real grounding risk that happened to work by
-coincidence. **Re-running `--with-generation` on the expanded 36-question
-corpus is a pending follow-up**, not yet done (each question is a real,
-slow LLM call — budget significant time for 36 of them on this
-hardware).
+**Generation, re-run on the full 5-document/36-question corpus:** 87.1%
+factual keyword-hit (27/31), 100% correct refusal (5/5). Manually read
+every one of the 4 reported misses (as this doc keeps insisting on) —
+only 3 are real:
+
+- **`q22` is a false miss, not a model error.** Asked which institute
+  conducted the research (`expected_keywords: ["SRMIST"]`); the answer
+  was *"SRM Institute of Science and Technology, Chennai conducted the
+  sign language storytelling research"* — completely correct, just
+  spelled out instead of using the abbreviation. The keyword metric is
+  too strict here, not the system. Correcting for this: **28/31 = 90.3%**
+  is the more honest number. (Lesson for extending the dataset: list
+  keyword *alternatives* for questions with a known acronym/full-name
+  pair, e.g. `["SRMIST", "SRM Institute"]`.)
+- **`q34`** is the already-known residual retrieval miss from the
+  ablation above (author lookup, vocabulary mismatch) — refused rather
+  than hallucinated, which is the correct behavior given retrieval
+  didn't find the chunk.
+- **`q30`** (paper title) is a **new** miss that didn't exist in the
+  single-document baseline: refused instead of answering, meaning
+  retrieval didn't surface the title chunk for this query on the
+  larger corpus. Same "meta-question about document identity" family
+  as `q34` and the original `q1` — asking "what is the title of the
+  paper" doesn't lexically or semantically anchor to the chunk that
+  states the title, no matter which retrieval mode.
+- **`q12`** (Docker/skills) is also **new**, and the most informative
+  one: this exact question scored a hit on the 1-document baseline.
+  With 4 more documents now competing for the top-5 slots, the correct
+  resume chunk got crowded out, and the model correctly refused rather
+  than guessing. This eval doesn't scope questions to their source
+  document via `document_ids` (built on Day 1, never exercised here) —
+  doing so would very likely fix this specific case and is a natural
+  next harness improvement: measure global retrieval *and*
+  document-scoped retrieval side by side.
+
+## A real bug found getting this far: Ollama vs. PyTorch on this machine
+
+Every earlier attempt at this generation run failed with the same
+error, and it took real diagnosis (not a guess) to fix: Ollama's
+`llama-server` subprocess crashed on its own CUDA initialization
+(`"CUDA error: shared object initialization failed"`, a native stack-
+buffer-overrun exit) whenever a PyTorch process (this app's embedding/
+reranker models) was concurrently resident. Ruled out simpler
+explanations one at a time before accepting this one:
+- Not overall memory quantity — reproduced with >3GB system RAM free
+  and VRAM at 0MiB/2048MiB used.
+- Not our process touching CUDA — reproduced identically with
+  `CUDA_VISIBLE_DEVICES=""` set for the Python process.
+- Not specific to having two torch models loaded — reproduced with
+  only BGE-M3 resident (no reranker).
+
+It reproduces the same way every time: Ollama auto-respawns
+`llama-server` after the crash, and a **20-second wait** (measured
+directly, not guessed) reliably lets that respawn succeed while the
+torch process stays resident. `LLMService.generate()` now retries
+with that backoff (`app/services/llm_service.py`) instead of failing
+the whole chat turn. This affects the real app too, not just this
+eval script: any chat request that lands while the embedding model is
+warm can hit this on this machine's Windows/WDDM + MX450 setup.
 
 ## Extending the dataset
 
 Progress against the original plan: ✅ 5 documents of different types
 (was 1), ✅ per-`expected_keywords` verification against actual parsed
-content (see `dataset.json`'s `_readme`). Still short of the 50+
+content (see `dataset.json`'s `_readme`), ✅ generation re-run on the
+full corpus with every miss manually read. Still short of the 50+
 question target (currently 36) and still all personal/academic files
 from one person — no contracts, legal documents, or genuinely
 adversarial content (e.g. a document deliberately containing text that
-looks like a prompt injection). Both are reasonable next additions.
+looks like a prompt injection). Also worth doing next: list keyword
+*alternatives* for acronym/full-name pairs (the `q22` false-miss
+lesson above), and add a document-scoped retrieval eval alongside the
+current global one (the `q12` finding above) using the `document_ids`
+filter `RetrievalService.search` already supports.

@@ -96,35 +96,44 @@ This section is deliberately blunt — see it as the project's honest changelog.
   before heavy local work. If you still hit a crash, free up RAM or reduce
   concurrent load; a proper fix (ingestion in an isolated worker process)
   is on the roadmap.
-- **Evaluation harness exists, covers 5 document types, still short of the
-  50+ question target.** See `backend/eval/` — 36 questions (resume, career/
-  salary spreadsheet, conference slides, a dataset report, an academic paper)
-  with retrieval (Recall@k, MRR) and generation (keyword-hit, refusal-rate)
-  metrics, plus a dense/bm25/hybrid/hybrid+rerank ablation
-  (`--compare-modes`). Every retrieval stage improves Recall@1 and MRR
-  monotonically (dense 71.0%/0.821 → bm25 74.2%/0.831 → hybrid 77.4%/0.866 →
-  hybrid+rerank 83.9%/0.903). Getting there included finding and fixing a
-  real regression: the first reranked run on this corpus actually
-  *regressed* Recall@5 versus plain hybrid, diagnosed to the reranker's
-  candidate pool being too narrow (a relevant chunk was crowded out before
-  reranking ever saw it) and fixed by measuring pool sizes directly rather
-  than guessing (`RERANK_CANDIDATE_MULTIPLIER` 4→8). One residual miss
-  remains — a name/author lookup whose target chunk shares no vocabulary
-  with the query, the same pattern a smaller-corpus run first surfaced;
-  needs query rewriting, not a retrieval tweak. Generation hasn't been
-  re-run on this expanded corpus yet (still reflects the original
-  single-document run). See `backend/eval/README.md`'s "Known result"
-  section for the full writeup — the harness explicitly warns against
-  trusting its summary numbers without reading `per_question`, and that
-  warning has already caught a wrong claim once (an earlier draft assumed
-  hybrid alone would fix the query above; it didn't, and the docs were
-  corrected once actually measured).
+- **Ollama can crash on startup while the embedding model is warm, on some
+  GPU/driver setups.** Diagnosed directly on the dev machine (Windows +
+  WDDM + MX450): Ollama's `llama-server` can fail its own CUDA init with a
+  native crash when a PyTorch process (this app's embedder/reranker) is
+  concurrently resident — reproduced with plenty of free RAM and VRAM, so
+  it isn't simply a memory problem; looks like a driver-level race. Ollama
+  auto-respawns the crashed subprocess, and `LLMService.generate()` retries
+  with a 20-second backoff (measured, not guessed) that reliably recovers.
+  If you hit slow first-response times, this retry is why.
+- **Evaluation harness: 5 document types, 36 questions, generation re-run
+  end to end.** See `backend/eval/` — retrieval (Recall@k, MRR) and
+  generation (keyword-hit, refusal-rate) metrics, plus a dense/bm25/hybrid/
+  hybrid+rerank ablation (`--compare-modes`). Every retrieval stage
+  improves Recall@1 and MRR monotonically (dense 71.0%/0.821 → bm25
+  74.2%/0.831 → hybrid 77.4%/0.866 → hybrid+rerank 83.9%/0.903) — getting
+  there meant finding and fixing a real regression (reranking initially
+  *hurt* Recall@5 because its candidate pool was too narrow; measured 4x
+  vs 8x vs 12x directly rather than guessing, 8x is now the default).
+  Generation scores 87.1% factual keyword-hit, 100% refusal-on-unanswerable
+  — but manually reading all 4 reported misses found only 3 are real: one
+  is a false miss (the model gave a fully correct, just differently-worded
+  answer — corrected rate is 90.3%), one is the already-known vocabulary-
+  mismatch gap, and one is new evidence that growing the corpus can crowd
+  a previously-correct answer out of the top-5 (a concrete case for
+  scoping retrieval to `document_ids`, which the API already supports but
+  this eval doesn't yet exercise). See `backend/eval/README.md` for the
+  full writeup, including a real bug found and fixed along the way (the
+  Ollama/CUDA crash above) — the harness explicitly warns against trusting
+  its summary numbers without reading `per_question`, and that warning has
+  already caught a wrong claim once (an earlier draft assumed hybrid alone
+  would fix a retrieval gap; it didn't, and the docs were corrected once
+  actually measured).
 
 ## Roadmap
 
 Short-term priorities, roughly in order: query rewriting (to address the
-vocabulary-mismatch gap above), re-run the generation eval on the expanded
-corpus and grow the dataset past 50 questions (contracts/legal documents,
-adversarial content), inline citations with page-level source highlighting,
-streaming + markdown in the UI, and a Docker Compose setup that works from a
-clean clone.
+vocabulary-mismatch gap above), a document-scoped retrieval eval alongside
+the current global one (the corpus-crowding finding above), grow the
+dataset past 50 questions (contracts/legal documents, adversarial content),
+inline citations with page-level source highlighting, streaming + markdown
+in the UI, and a Docker Compose setup that works from a clean clone.
