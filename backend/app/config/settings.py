@@ -52,6 +52,20 @@ class Settings(BaseSettings):
     # no further gain from 12x. See backend/eval/README.md.
     RERANK_CANDIDATE_MULTIPLIER: int = 8
 
+    # Refusal threshold: chunks the reranker scores below this cutoff
+    # are dropped before being sent to the LLM at all, so a weak
+    # retrieval match can't be confidently answered from as if it
+    # were solid grounding (see PromptBuilder.NO_CONTEXT_MESSAGE for
+    # the resulting refusal). Scoped specifically to reranker scores
+    # (cross-encoder logits) -- NOT applied to dense/BM25/hybrid
+    # scores, whose scales are different and not calibrated here.
+    # None (the default) disables filtering entirely: this needs
+    # real calibration (sampling reranker scores across known
+    # relevant vs. irrelevant chunks) before it's safe to set a
+    # nonzero default -- see backend/eval/README.md. Shipping an
+    # uncalibrated guess risks silently refusing correct answers.
+    RERANK_SCORE_THRESHOLD: float | None = None
+
     # Query rewriting (HyDE-style): generates a short hypothetical
     # answer passage with the LLM and embeds THAT for dense retrieval
     # instead of the raw question. Targets a specific, measured gap:

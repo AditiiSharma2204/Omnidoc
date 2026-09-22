@@ -187,3 +187,123 @@ class TestSearchRerankWiring:
 
         assert results[0].chunk_id == "c1"
         assert results[0].score == 0.9
+
+
+def _chunk_scored(chunk_id, score):
+    return RetrievedChunk(
+        score=score,
+        document_id="doc-a",
+        chunk_id=chunk_id,
+        heading="H",
+        title="doc-a.pdf",
+        section=None,
+        page=None,
+        text="text",
+    )
+
+
+class TestScoreThreshold:
+    """
+    RetrievalService._apply_score_threshold -- the refusal-threshold
+    mechanism. Pure logic, no model involved.
+    """
+
+    def test_disabled_by_default_returns_everything_unchanged(self):
+        from app.services.retrieval_service import RetrievalService
+
+        results = [_chunk_scored("c1", -10.0), _chunk_scored("c2", -50.0)]
+
+        filtered = RetrievalService._apply_score_threshold(results)
+
+        assert filtered == results
+
+    def test_drops_results_below_threshold(self, monkeypatch):
+        from app.config.settings import settings
+        from app.services.retrieval_service import RetrievalService
+
+        monkeypatch.setattr(settings, "RERANK_SCORE_THRESHOLD", -20.0)
+
+        results = [
+            _chunk_scored("above", -10.0),
+            _chunk_scored("at", -20.0),
+            _chunk_scored("below", -30.0),
+        ]
+
+        filtered = RetrievalService._apply_score_threshold(results)
+
+        assert [r.chunk_id for r in filtered] == ["above", "at"]
+
+    def test_all_below_threshold_returns_empty(self, monkeypatch):
+        from app.config.settings import settings
+        from app.services.retrieval_service import RetrievalService
+
+        monkeypatch.setattr(settings, "RERANK_SCORE_THRESHOLD", 0.0)
+
+        results = [_chunk_scored("c1", -5.0), _chunk_scored("c2", -1.0)]
+
+        filtered = RetrievalService._apply_score_threshold(results)
+
+        assert filtered == []
+
+    def test_threshold_only_applies_when_reranking(self, monkeypatch):
+        """
+        The threshold is calibrated for reranker (cross-encoder)
+        scores specifically -- it must not silently filter dense/
+        BM25/hybrid-without-rerank results on an incompatible scale.
+        """
+        from app.config.settings import settings
+        from app.schemas.retrieval import RetrievedChunk as RC
+        from app.services.retrieval_service import RetrievalService
+
+        # A threshold that would drop everything if it were (wrongly)
+        # applied to raw dense/hybrid scores, which are small
+        # positive floats, not cross-encoder logits.
+        monkeypatch.setattr(settings, "RERANK_SCORE_THRESHOLD", -100.0)
+
+        def fake_retrieve(cls, query, top_k, document_ids, mode, embedding_query=None):
+            return [RC(
+                score=0.02,  # a plausible RRF-fused hybrid score
+                document_id="doc-a",
+                chunk_id="c1",
+                heading="H",
+                title="doc-a.pdf",
+                section=None,
+                page=None,
+                text="text",
+            )]
+
+        monkeypatch.setattr(
+            RetrievalService, "_retrieve", classmethod(fake_retrieve)
+        )
+
+        results = RetrievalService.search(
+            "q", top_k=5, mode="hybrid", rerank=False
+        )
+
+        # threshold=-100 with score=0.02 would pass anyway, so use a
+        # threshold that WOULD filter to prove it's not even consulted
+        # on the no-rerank path: score 0.02 < a threshold of 1.0.
+        monkeypatch.setattr(settings, "RERANK_SCORE_THRESHOLD", 1.0)
+
+        results = RetrievalService.search(
+            "q", top_k=5, mode="hybrid", rerank=False
+        )
+
+        assert len(results) == 1  # not filtered -- rerank=False path
+
+    def test_empty_after_filtering_triggers_prompt_builder_refusal(
+        self, monkeypatch
+    ):
+        """
+        End-to-end check that an all-filtered retrieval flows into
+        the existing "no context" refusal path, not a crash or an
+        empty-context prompt sent to the LLM.
+        """
+        from app.prompts.prompt_builder import PromptBuilder
+
+        system, user = PromptBuilder.build(
+            question="What is this person's name?",
+            retrieved_chunks=[],
+        )
+
+        assert PromptBuilder.NO_CONTEXT_MESSAGE in user

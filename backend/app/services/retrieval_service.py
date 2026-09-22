@@ -268,7 +268,28 @@ class RetrievalService:
         # harness's --compare-modes).
         from app.services.reranker_service import RerankerService
 
-        return RerankerService.rerank(query, candidates, top_k)
+        reranked = RerankerService.rerank(query, candidates, top_k)
+
+        return cls._apply_score_threshold(reranked)
+
+    @staticmethod
+    def _apply_score_threshold(
+        results: list[RetrievedChunk],
+    ) -> list[RetrievedChunk]:
+        """
+        Drops results scoring below settings.RERANK_SCORE_THRESHOLD.
+        A no-op when the threshold is unset (the default -- see the
+        settings comment for why this isn't calibrated yet). If this
+        empties the list, the caller (PromptBuilder) already treats
+        an empty retrieval as "no context found" and refuses rather
+        than answering from weak matches.
+        """
+        threshold = settings.RERANK_SCORE_THRESHOLD
+
+        if threshold is None:
+            return results
+
+        return [r for r in results if r.score >= threshold]
 
     @classmethod
     def _retrieve(

@@ -27,7 +27,7 @@ React (Vite/TS)  →  FastAPI  →  Docling (parse)  →  Chunker  →  BGE-M3 (
 
 - **Parsing** — [Docling](https://github.com/docling-project/docling) converts PDF/DOCX/PPTX/XLSX to markdown.
 - **Chunking** — a custom markdown-hierarchy chunker with a size cap and overlap (`app/services/chunking_service.py`).
-- **Retrieval** — hybrid by default: FAISS (dense, BGE-M3) + BM25 (lexical), fused with Reciprocal Rank Fusion, then re-scored by a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`). Optional HyDE-style query rewriting (an LLM-generated hypothetical answer, embedded instead of the raw question) targets a specific measured gap but is off by default and not yet quality-measured — see below. Each stage is independently toggleable via settings (`RETRIEVAL_MODE`, `RERANK_ENABLED`, `QUERY_REWRITE_ENABLED`) — see `backend/eval/README.md` for what's actually been measured.
+- **Retrieval** — hybrid by default: FAISS (dense, BGE-M3) + BM25 (lexical), fused with Reciprocal Rank Fusion, then re-scored by a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`). Optional HyDE-style query rewriting (an LLM-generated hypothetical answer, embedded instead of the raw question) targets a specific measured gap but is off by default and not yet quality-measured — see below. A reranker-score refusal threshold (`RERANK_SCORE_THRESHOLD`) can drop weak matches before they reach the LLM at all, so a bad retrieval can't be confidently answered from — implemented and unit-tested, but off by default (uncalibrated; see below). Each stage is independently toggleable via settings (`RETRIEVAL_MODE`, `RERANK_ENABLED`, `QUERY_REWRITE_ENABLED`, `RERANK_SCORE_THRESHOLD`) — see `backend/eval/README.md` for what's actually been measured.
 - **Embeddings** — [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) via `sentence-transformers`.
 - **Vector store** — FAISS (`IndexFlatIP`, cosine similarity via L2-normalized vectors).
 - **Generation** — [Ollama](https://ollama.com) running `qwen2.5:3b` locally.
@@ -85,6 +85,15 @@ This section is deliberately blunt — see it as the project's honest changelog.
   reliable, not something more code changes fix. See
   `backend/eval/README.md`'s "Query rewriting" section for the full
   account before deciding whether to enable this by default.
+- **Refusal threshold is implemented but uncalibrated.**
+  `RetrievalService._apply_score_threshold` can drop reranked chunks below
+  `RERANK_SCORE_THRESHOLD` before they ever reach the LLM (mechanism unit
+  tested: `tests/test_reranker_service.py::TestScoreThreshold`), but the
+  setting defaults to `None` (disabled) because a real cutoff needs
+  sampling actual reranker scores across known relevant vs. irrelevant
+  chunks, which needs the same live eval runs currently blocked (see
+  above). Shipping a guessed threshold risks silently refusing correct
+  answers, which is worse than not having the feature at all.
 - **No OCR fallback** — scanned (image-only) PDFs will parse to near-empty text.
 - **No table/chart/image understanding** — Docling extracts tables as markdown text; nothing structures or reasons over them specially yet.
 - **No conversation memory** — each question is answered independently of chat history.
@@ -147,9 +156,11 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 ## Roadmap
 
-Short-term priorities, roughly in order: query rewriting (to address the
-vocabulary-mismatch gap above), a document-scoped retrieval eval alongside
-the current global one (the corpus-crowding finding above), grow the
-dataset past 50 questions (contracts/legal documents, adversarial content),
-inline citations with page-level source highlighting, streaming + markdown
-in the UI, and a Docker Compose setup that works from a clean clone.
+Short-term priorities, roughly in order: once the dev machine is stable
+again, calibrate and measure query rewriting and the refusal threshold
+(both implemented, both blocked on the same live-eval instability above);
+a document-scoped retrieval eval alongside the current global one (the
+corpus-crowding finding above); grow the dataset past 50 questions
+(contracts/legal documents, adversarial content); inline citations with
+page-level source highlighting; streaming + markdown in the UI; and a
+Docker Compose setup that works from a clean clone.
