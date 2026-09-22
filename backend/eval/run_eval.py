@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,17 +57,30 @@ def run_retrieval_eval(
     top_k_values: list[int],
     mode: str | None = None,
     rerank: bool | None = None,
-) -> dict[int, AggregateResults]:
+    query_rewrite: bool | None = None,
+) -> tuple[dict[int, AggregateResults], float]:
+    """
+    Returns (results_by_k, total_wall_clock_seconds). Wall-clock time
+    is reported alongside quality because some options (query
+    rewriting in particular) trade one for the other -- an ablation
+    that only reports Recall@k would hide that cost.
+    """
 
     max_k = max(top_k_values)
     results = {k: AggregateResults() for k in top_k_values}
+
+    start = time.monotonic()
 
     for item in items:
         if item["category"] != "factual":
             continue
 
         retrieved = RetrievalService.search(
-            query=item["question"], top_k=max_k, mode=mode, rerank=rerank
+            query=item["question"],
+            top_k=max_k,
+            mode=mode,
+            rerank=rerank,
+            query_rewrite=query_rewrite,
         )
         retrieved_texts = [r.text for r in retrieved]
         keywords = item["expected_keywords"]
@@ -93,7 +107,30 @@ def run_retrieval_eval(
                 }
             )
 
-    return results
+    elapsed = time.monotonic() - start
+
+    return results, elapsed
+
+
+def warm_up_ollama_with_low_contention() -> None:
+    """
+    Ollama's llama-server can crash on its OWN CUDA init when a
+    PyTorch process (BGE-M3/the reranker) is already resident on this
+    project's dev hardware (see LLMService's retry-budget comment for
+    the full diagnosis). Retrying alone doesn't reliably help, because
+    every retry attempt happens under the same contention.
+
+    Must be called as the FIRST thing in main(), before BGE-M3 or the
+    reranker are loaded at all -- that's the only reliably low-
+    contention moment available. (An earlier version of this function
+    tried releasing/reloading the already-resident torch singletons
+    mid-run instead; reloading SentenceTransformer a second time in
+    the same process hit an unrelated transformers library bug, so
+    that approach was abandoned in favor of this simpler one: warm up
+    once, up front, and rely on Ollama's keep-alive -- several
+    minutes by default -- to stay warm through the rest of the run.)
+    """
+    LLMService.generate(system="You are a test.", user="Say hi.")
 
 
 def run_generation_eval(items: list[dict]) -> dict:
@@ -169,6 +206,15 @@ def main():
             "just a single-mode report). Ignores --with-generation."
         ),
     )
+    parser.add_argument(
+        "--with-query-rewrite",
+        action="store_true",
+        help=(
+            "With --compare-modes, also run a hybrid+rerank+rewrite "
+            "variant (HyDE-style query rewriting adds one LLM call "
+            "per question -- slow, budget real time for it)."
+        ),
+    )
     args = parser.parse_args()
 
     items = load_dataset()
@@ -179,40 +225,68 @@ def main():
           f"({factual_count} factual, {unanswerable_count} unanswerable)")
     print()
 
-    # Best-effort: free Ollama's resident model before loading the
-    # embedding model in THIS process. On memory-constrained
-    # hardware, both being resident at once is enough to OOM --
-    # Ollama reloads transparently (one-time delay) on the first
-    # real generation call below, if --with-generation is set.
-    LLMService.unload()
+    needs_ollama = args.with_generation or (
+        args.compare_modes and args.with_query_rewrite
+    )
+
+    if needs_ollama:
+        # Warm Ollama up FIRST, before BGE-M3/the reranker are loaded
+        # at all -- see warm_up_ollama_with_low_contention()'s
+        # docstring for why this ordering specifically matters on
+        # this project's dev hardware.
+        warm_up_ollama_with_low_contention()
+    else:
+        # Best-effort: free Ollama's resident model before loading
+        # the embedding model in THIS process. Nothing in this run
+        # needs Ollama at all, so there's no reason to keep it
+        # resident and competing for memory.
+        LLMService.unload()
 
     if args.compare_modes:
-        print("=== Retrieval ablation: dense vs bm25 vs hybrid vs hybrid+rerank ===")
-        print(f"{'variant':>14} | {'k':>4} | {'Recall@k':>10} | {'MRR':>8}")
+        print("=== Retrieval ablation: dense vs bm25 vs hybrid vs hybrid+rerank (vs +query_rewrite) ===")
+        print(f"{'variant':>20} | {'k':>4} | {'Recall@k':>10} | {'MRR':>8}")
         comparison = {}
         variants = [
-            ("dense", "dense", False),
-            ("bm25", "bm25", False),
-            ("hybrid", "hybrid", False),
-            ("hybrid+rerank", "hybrid", True),
+            ("dense", "dense", False, False),
+            ("bm25", "bm25", False, False),
+            ("hybrid", "hybrid", False, False),
+            ("hybrid+rerank", "hybrid", True, False),
         ]
-        for label, mode, rerank in variants:
-            mode_results = run_retrieval_eval(
-                items, args.top_k, mode=mode, rerank=rerank
+        if args.with_query_rewrite:
+            variants.append(
+                ("hybrid+rerank+rewrite", "hybrid", True, True)
+            )
+        for label, mode, rerank, query_rewrite in variants:
+            mode_results, elapsed = run_retrieval_eval(
+                items,
+                args.top_k,
+                mode=mode,
+                rerank=rerank,
+                query_rewrite=query_rewrite,
             )
             comparison[label] = {
-                str(k): {
-                    "recall_at_k": mode_results[k].recall_at_k,
-                    "mrr": mode_results[k].mrr,
-                }
-                for k in args.top_k
+                "seconds_total": elapsed,
+                "seconds_per_question": (
+                    elapsed / mode_results[args.top_k[0]].num_questions
+                    if mode_results[args.top_k[0]].num_questions
+                    else None
+                ),
+                **{
+                    str(k): {
+                        "recall_at_k": mode_results[k].recall_at_k,
+                        "mrr": mode_results[k].mrr,
+                    }
+                    for k in args.top_k
+                },
             }
             for k in args.top_k:
                 agg = mode_results[k]
                 print(
-                    f"{label:>14} | {k:>4} | {agg.recall_at_k:>10.2%} "
+                    f"{label:>20} | {k:>4} | {agg.recall_at_k:>10.2%} "
                     f"| {agg.mrr:>8.3f}"
                 )
+            print(f"{'':>20}   ({elapsed:.1f}s total, "
+                  f"{elapsed / mode_results[args.top_k[0]].num_questions:.2f}s/question)")
 
         RESULTS_DIR.mkdir(exist_ok=True)
         out_path = (
@@ -232,7 +306,7 @@ def main():
         print(f"\nFull comparison written to {out_path}")
         return
 
-    retrieval_results = run_retrieval_eval(items, args.top_k)
+    retrieval_results, _elapsed = run_retrieval_eval(items, args.top_k)
 
     print("=== Retrieval ===")
     print(f"{'k':>4} | {'Recall@k':>10} | {'MRR':>8}")

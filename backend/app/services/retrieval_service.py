@@ -32,10 +32,10 @@ class RetrievalService:
     # ==========================================================
 
     @staticmethod
-    def embed_query(query: str) -> np.ndarray:
+    def embed_query(text: str) -> np.ndarray:
         model = EmbeddingModel.get_model()
         embedding = model.encode(
-            [query],
+            [text],
             normalize_embeddings=True,
             convert_to_numpy=True,
         )
@@ -107,12 +107,20 @@ class RetrievalService:
         query: str,
         top_k: int,
         document_ids: list[str] | None,
+        embedding_query: str | None = None,
     ) -> dict[tuple[str, str], RetrievedChunk]:
         """
         Returns {(document_id, chunk_id): RetrievedChunk}, deduped
         (near-duplicate FAISS hits keep the highest score).
+
+        `embedding_query`, when given, is embedded INSTEAD of `query`
+        -- used for HyDE-style query rewriting, where a hypothetical
+        answer passage (not the literal question) produces a better
+        embedding for similarity search. `query` itself is unused in
+        that case but kept as a parameter for a consistent dense/bm25
+        call signature.
         """
-        query_embedding = cls.embed_query(query)
+        query_embedding = cls.embed_query(embedding_query or query)
         fetch_k = cls._fetch_depth(top_k, document_ids)
 
         scores, vector_ids = FAISSService.search(
@@ -207,20 +215,39 @@ class RetrievalService:
         document_ids: list[str] | None = None,
         mode: str | None = None,
         rerank: bool | None = None,
+        query_rewrite: bool | None = None,
     ) -> list[RetrievedChunk]:
         """
         Search the indexed corpus and return deduplicated chunks,
         best first.
 
         `document_ids`, when given, restricts results to those
-        documents. `mode` overrides settings.RETRIEVAL_MODE and
-        `rerank` overrides settings.RERANK_ENABLED for this call
-        (used by the eval harness to A/B without touching global
-        config).
+        documents. `mode` overrides settings.RETRIEVAL_MODE, `rerank`
+        overrides settings.RERANK_ENABLED, and `query_rewrite`
+        overrides settings.QUERY_REWRITE_ENABLED for this call (used
+        by the eval harness to A/B without touching global config).
         """
         should_rerank = (
             settings.RERANK_ENABLED if rerank is None else rerank
         )
+        should_rewrite = (
+            settings.QUERY_REWRITE_ENABLED
+            if query_rewrite is None
+            else query_rewrite
+        )
+
+        embedding_query = None
+        if should_rewrite:
+            # Local import: keeps the extra LLM-call dependency out
+            # of the path for callers that never rewrite (e.g. the
+            # eval harness's --compare-modes dense/bm25/hybrid runs).
+            from app.services.query_rewrite_service import (
+                QueryRewriteService,
+            )
+
+            embedding_query = (
+                QueryRewriteService.generate_hypothetical_answer(query)
+            )
 
         fetch_k = (
             top_k * settings.RERANK_CANDIDATE_MULTIPLIER
@@ -228,7 +255,9 @@ class RetrievalService:
             else top_k
         )
 
-        candidates = cls._retrieve(query, fetch_k, document_ids, mode)
+        candidates = cls._retrieve(
+            query, fetch_k, document_ids, mode, embedding_query
+        )
 
         if not should_rerank:
             return candidates[:top_k]
@@ -248,6 +277,7 @@ class RetrievalService:
         top_k: int,
         document_ids: list[str] | None,
         mode: str | None,
+        embedding_query: str | None = None,
     ) -> list[RetrievedChunk]:
         """
         Runs the selected retrieval mode (dense/bm25/hybrid) and
@@ -255,11 +285,19 @@ class RetrievalService:
         `search()` so reranking can request a wider candidate pool
         than the final top_k without duplicating the dense/bm25/
         hybrid dispatch logic.
+
+        `embedding_query`, when given, is used for the dense leg's
+        embedding instead of `query` (HyDE-style rewriting); BM25
+        always uses the literal `query`, since a fabricated
+        hypothetical answer helps semantic similarity but would just
+        inject noise into lexical matching.
         """
         mode = mode or settings.RETRIEVAL_MODE
 
         if mode == "dense":
-            dense = cls._dense_search(query, top_k, document_ids)
+            dense = cls._dense_search(
+                query, top_k, document_ids, embedding_query
+            )
             ranked = sorted(
                 dense.values(), key=lambda r: r.score, reverse=True
             )
@@ -275,7 +313,9 @@ class RetrievalService:
         if mode != "hybrid":
             raise ValueError(f"Unknown RETRIEVAL_MODE: {mode!r}")
 
-        dense = cls._dense_search(query, top_k, document_ids)
+        dense = cls._dense_search(
+            query, top_k, document_ids, embedding_query
+        )
         bm25 = cls._bm25_search(query, top_k, document_ids)
 
         dense_ranked_keys = [

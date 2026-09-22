@@ -27,7 +27,7 @@ React (Vite/TS)  →  FastAPI  →  Docling (parse)  →  Chunker  →  BGE-M3 (
 
 - **Parsing** — [Docling](https://github.com/docling-project/docling) converts PDF/DOCX/PPTX/XLSX to markdown.
 - **Chunking** — a custom markdown-hierarchy chunker with a size cap and overlap (`app/services/chunking_service.py`).
-- **Retrieval** — hybrid by default: FAISS (dense, BGE-M3) + BM25 (lexical), fused with Reciprocal Rank Fusion, then re-scored by a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`). Each stage is independently toggleable via settings (`RETRIEVAL_MODE`, `RERANK_ENABLED`) and measured — see `backend/eval/README.md`.
+- **Retrieval** — hybrid by default: FAISS (dense, BGE-M3) + BM25 (lexical), fused with Reciprocal Rank Fusion, then re-scored by a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`). Optional HyDE-style query rewriting (an LLM-generated hypothetical answer, embedded instead of the raw question) targets a specific measured gap but is off by default and not yet quality-measured — see below. Each stage is independently toggleable via settings (`RETRIEVAL_MODE`, `RERANK_ENABLED`, `QUERY_REWRITE_ENABLED`) — see `backend/eval/README.md` for what's actually been measured.
 - **Embeddings** — [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) via `sentence-transformers`.
 - **Vector store** — FAISS (`IndexFlatIP`, cosine similarity via L2-normalized vectors).
 - **Generation** — [Ollama](https://ollama.com) running `qwen2.5:3b` locally.
@@ -74,10 +74,17 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 - **No streaming in the UI yet.** The `/chat/stream` endpoint exists; the frontend isn't wired to it.
 - **No markdown rendering in the chat UI.**
-- **No query rewriting.** Retrieval (hybrid BM25+dense, cross-encoder
-  reranked) still can't answer a "who/what is X" query whose target chunk
-  shares no vocabulary with the question — see the evaluation harness bullet
-  below for a specific, measured example.
+- **Query rewriting is implemented but its quality impact is unmeasured.**
+  `QueryRewriteService` (HyDE-style: embeds an LLM-generated hypothetical
+  answer instead of the raw question) is wired into retrieval and unit
+  tested, off by default (`QUERY_REWRITE_ENABLED=False`). The live
+  before/after ablation is blocked, not skipped: every attempt this
+  session hit escalating machine instability (see the Ollama/CUDA note
+  below) ending in a raw allocation failure with 4GB+ RAM free — a strong
+  signal the dev machine needs a restart before more heavy ML runs are
+  reliable, not something more code changes fix. See
+  `backend/eval/README.md`'s "Query rewriting" section for the full
+  account before deciding whether to enable this by default.
 - **No OCR fallback** — scanned (image-only) PDFs will parse to near-empty text.
 - **No table/chart/image understanding** — Docling extracts tables as markdown text; nothing structures or reasons over them specially yet.
 - **No conversation memory** — each question is answered independently of chat history.
@@ -97,14 +104,23 @@ This section is deliberately blunt — see it as the project's honest changelog.
   concurrent load; a proper fix (ingestion in an isolated worker process)
   is on the roadmap.
 - **Ollama can crash on startup while the embedding model is warm, on some
-  GPU/driver setups.** Diagnosed directly on the dev machine (Windows +
-  WDDM + MX450): Ollama's `llama-server` can fail its own CUDA init with a
-  native crash when a PyTorch process (this app's embedder/reranker) is
-  concurrently resident — reproduced with plenty of free RAM and VRAM, so
-  it isn't simply a memory problem; looks like a driver-level race. Ollama
-  auto-respawns the crashed subprocess, and `LLMService.generate()` retries
-  with a 20-second backoff (measured, not guessed) that reliably recovers.
-  If you hit slow first-response times, this retry is why.
+  GPU/driver setups — and the fix is a mitigation, not a guarantee.**
+  Diagnosed directly on the dev machine (Windows + WDDM + MX450): Ollama's
+  `llama-server` can fail its own CUDA init with a native crash when a
+  PyTorch process (this app's embedder/reranker) is concurrently resident
+  — reproduced with plenty of free RAM and VRAM, so it isn't simply a
+  memory problem; looks like a driver-level race. `LLMService.generate()`
+  retries with backoff (up to 5 attempts, `RETRY_BACKOFF_SECONDS=20`) and
+  that alone was enough the first several times this was hit. It was
+  **not** reliably enough on every occasion, though (a later attempt still
+  failed after the full retry budget) — the more robust workaround found
+  was warming Ollama up *before* loading any PyTorch model in the process
+  at all (see `eval/run_eval.py`'s `warm_up_ollama_with_low_contention`),
+  which the eval harness does but the main app's own chat path does not
+  yet. If this app's very first chat request after startup is unusually
+  slow or fails outright on this kind of hardware, this is why — applying
+  the same "warm Ollama first" ordering to `app/main.py`'s startup is a
+  reasonable next fix, not yet done.
 - **Evaluation harness: 5 document types, 36 questions, generation re-run
   end to end.** See `backend/eval/` — retrieval (Recall@k, MRR) and
   generation (keyword-hit, refusal-rate) metrics, plus a dense/bm25/hybrid/

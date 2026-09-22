@@ -52,6 +52,20 @@ class Settings(BaseSettings):
     # no further gain from 12x. See backend/eval/README.md.
     RERANK_CANDIDATE_MULTIPLIER: int = 8
 
+    # Query rewriting (HyDE-style): generates a short hypothetical
+    # answer passage with the LLM and embeds THAT for dense retrieval
+    # instead of the raw question. Targets a specific, measured gap:
+    # short "what is X's name/title/author" queries share no
+    # vocabulary with the chunk that states the answer, so neither
+    # dense nor BM25 similarity has anything to match on (see
+    # backend/eval/README.md's residual-miss writeup). A hypothetical
+    # answer written in document-like prose closes that gap. Off by
+    # default: it adds a real LLM call (measured latency cost) to
+    # every query, and the benefit is narrow (a handful of questions
+    # in the current eval set) -- see the eval writeup for the
+    # measured before/after before turning this on.
+    QUERY_REWRITE_ENABLED: bool = False
+
     # Chunking (character-based; ~4 chars/token heuristic)
     CHUNK_MAX_CHARS: int = 1600
     CHUNK_OVERLAP_CHARS: int = 200

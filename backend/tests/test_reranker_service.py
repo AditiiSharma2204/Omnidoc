@@ -114,7 +114,7 @@ class TestSearchRerankWiring:
         from app.schemas.retrieval import RetrievedChunk as RC
         from app.services.retrieval_service import RetrievalService
 
-        def fake_retrieve(cls, query, top_k, document_ids, mode):
+        def fake_retrieve(cls, query, top_k, document_ids, mode, embedding_query=None):
             return [
                 RC(
                     score=0.9,
@@ -160,7 +160,7 @@ class TestSearchRerankWiring:
         from app.schemas.retrieval import RetrievedChunk as RC
         from app.services.retrieval_service import RetrievalService
 
-        def fake_retrieve(cls, query, top_k, document_ids, mode):
+        def fake_retrieve(cls, query, top_k, document_ids, mode, embedding_query=None):
             return [
                 RC(
                     score=0.9,

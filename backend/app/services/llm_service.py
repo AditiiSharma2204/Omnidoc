@@ -22,10 +22,15 @@ class LLMService:
     # primarily a memory-quantity problem), and even with only ONE
     # torch model loaded (not specific to running both the embedder
     # and reranker). It looks like a genuine driver-level race, not
-    # something this app can prevent -- but Ollama auto-respawns
-    # llama-server, and a 20s wait (measured directly) reliably lets
-    # that respawn succeed while the torch process stays resident.
-    MAX_RETRIES = 3
+    # something this app can prevent. Ollama auto-respawns
+    # llama-server after the crash, but recovery time is variable --
+    # one isolated test recovered in 20s, but a later run (with BOTH
+    # BGE-M3 and the reranker freshly resident at once) still failed
+    # after 60s of cumulative backoff. Generous retry budget on
+    # purpose: this is meant to be a rare, self-healing condition
+    # specific to this constrained dev setup, not a normal production
+    # expectation, so a slow full recovery beats a hard failure.
+    MAX_RETRIES = 5
     RETRY_BACKOFF_SECONDS = 20
 
     @classmethod

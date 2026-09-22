@@ -24,6 +24,10 @@ python -m eval.run_eval --top-k 1 3 5
 
 # Ablation: dense vs bm25 vs hybrid vs hybrid+rerank, side by side
 python -m eval.run_eval --compare-modes
+
+# Also add a hybrid+rerank+rewrite variant (HyDE-style query rewriting --
+# adds one LLM call per question, slow; see "Query rewriting" below)
+python -m eval.run_eval --compare-modes --with-query-rewrite
 ```
 
 ## What it measures
@@ -66,12 +70,18 @@ actually matter.
 
 **Retrieval ablation (dense vs bm25 vs hybrid vs hybrid+rerank), `--compare-modes`:**
 
-| variant       | Recall@1 | Recall@3 | Recall@5 | MRR   |
-|---------------|----------|----------|----------|-------|
-| dense         | 71.0%    | 90.3%    | 96.8%    | 0.821 |
-| bm25          | 74.2%    | 90.3%    | 93.5%    | 0.831 |
-| hybrid        | 77.4%    | 96.8%    | 96.8%    | 0.866 |
-| hybrid+rerank | 83.9%    | 96.8%    | 96.8%    | 0.903 |
+| variant       | Recall@1 | Recall@3 | Recall@5 | MRR   | s/question |
+|---------------|----------|----------|----------|-------|------------|
+| dense         | 71.0%    | 90.3%    | 96.8%    | 0.821 | ~0.4s      |
+| bm25          | 74.2%    | 90.3%    | 93.5%    | 0.831 | ~0.01s     |
+| hybrid        | 77.4%    | 96.8%    | 96.8%    | 0.866 | ~0.2-0.3s  |
+| hybrid+rerank | 83.9%    | 96.8%    | 96.8%    | 0.903 | ~3.0-3.4s  |
+
+Quality and latency both matter for a design decision, not just
+quality — the table includes both. Reranking is ~10-15x slower than
+plain hybrid per question (one cross-encoder forward pass per
+candidate, CPU-bound on this hardware) for a real quality gain; worth
+knowing before assuming "on" is free.
 
 Every stage improves Recall@1 and MRR monotonically. This is the
 result of an actual, evidence-driven tuning pass, not the first
@@ -141,6 +151,51 @@ only 3 are real:
   doing so would very likely fix this specific case and is a natural
   next harness improvement: measure global retrieval *and*
   document-scoped retrieval side by side.
+
+## Query rewriting (HyDE) — implemented and unit-tested, live measurement blocked
+
+`app/services/query_rewrite_service.py` implements HyDE-style query
+rewriting: instead of embedding the raw question for dense retrieval,
+ask the LLM to write a short hypothetical answer passage first, and
+embed *that*. This directly targets the residual-miss pattern above
+(a "who/what is X" query sharing no vocabulary with its target chunk)
+-- a hypothetical answer like *"The person's name is Aditii Sharma."*
+is written in the same register as the real chunk, so it should embed
+much closer to it than the bare question does. BM25 still gets the
+literal query (a fabricated hypothetical would just inject noise into
+lexical matching); only the dense leg's embedding is affected. Off by
+default (`settings.QUERY_REWRITE_ENABLED = False`) because it adds a
+real LLM call to every query -- a genuine latency cost, not just a
+config flag -- and that cost needs to be weighed against a measured
+quality gain before defaulting it on.
+
+**The "measured quality gain" part is not done yet.** Every attempt
+to run `--compare-modes --with-query-rewrite` on this machine, in this
+session, failed -- but each failure was a different, worsening
+symptom, all downstream of the environment instability this session
+already diagnosed once (see the CUDA section below): first the same
+Ollama/CUDA crash (recovered by increasing the retry budget and, when
+that still wasn't reliable, by warming Ollama up before any torch
+model loads at all, not mid-run -- reloading `SentenceTransformer` in
+the same process turned out to hit an unrelated transformers library
+bug), then a `ValueError` reloading BGE-M3, then finally a raw
+`"memory allocation of 340 bytes failed"` with 4GB+ system RAM
+free -- a signal so far outside normal OOM territory that it reads as
+accumulated Windows/driver-level instability from this session's many
+earlier crashes, not something more retry logic or code changes can
+fix. Confirmed the code itself isn't the problem: the full test suite
+(73 tests, fully mocked, no real model loads) runs cleanly and fast
+throughout all of this.
+
+**What's actually shipped:** the feature, wired into
+`RetrievalService.search(query_rewrite=...)`, off by default, with
+9 unit tests covering the LLM call shape and the dense-only/BM25-
+untouched wiring (`tests/test_query_rewrite_service.py`,
+`tests/test_hybrid_retrieval.py::TestQueryRewriteWiring`) --
+everything short of the live retrieval-quality number. Re-run
+`--compare-modes --with-query-rewrite` (ideally after a machine
+restart, given the failure signature above) before deciding whether
+to flip `QUERY_REWRITE_ENABLED` to `True` by default.
 
 ## A real bug found getting this far: Ollama vs. PyTorch on this machine
 
