@@ -30,7 +30,7 @@ React (Vite/TS)  →  FastAPI  →  Docling (parse)  →  Chunker  →  BGE-M3 (
 - **Retrieval** — hybrid by default: FAISS (dense, BGE-M3) + BM25 (lexical), fused with Reciprocal Rank Fusion, then re-scored by a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`). Optional HyDE-style query rewriting (an LLM-generated hypothetical answer, embedded instead of the raw question) targets a specific measured gap but is off by default and not yet quality-measured — see below. A reranker-score refusal threshold (`RERANK_SCORE_THRESHOLD`) can drop weak matches before they reach the LLM at all, so a bad retrieval can't be confidently answered from — implemented and unit-tested, but off by default (uncalibrated; see below). Each stage is independently toggleable via settings (`RETRIEVAL_MODE`, `RERANK_ENABLED`, `QUERY_REWRITE_ENABLED`, `RERANK_SCORE_THRESHOLD`) — see `backend/eval/README.md` for what's actually been measured.
 - **Embeddings** — [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) via `sentence-transformers`.
 - **Vector store** — FAISS (`IndexFlatIP`, cosine similarity via L2-normalized vectors).
-- **Generation** — [Ollama](https://ollama.com) running `qwen2.5:3b` locally.
+- **Generation** — [Ollama](https://ollama.com) running `qwen2.5:3b` locally, instructed to cite sources inline as `[1]`, `[2]`, etc. matching the prompt's context numbering. `ChatService` parses those markers and returns a `sources` list whose `index` fields line up exactly with them, each flagged `cited: true/false` — an out-of-range or hallucinated citation number simply matches nothing, rather than crashing or silently mapping to the wrong source.
 
 ## Setup
 
@@ -94,6 +94,19 @@ This section is deliberately blunt — see it as the project's honest changelog.
   chunks, which needs the same live eval runs currently blocked (see
   above). Shipping a guessed threshold risks silently refusing correct
   answers, which is worse than not having the feature at all.
+- **Inline citations are unit-tested (32 tests) but not yet live-verified
+  end to end.** Every attempt to run a real chat request while writing
+  this feature hit the same ongoing machine instability documented
+  above and in `backend/eval/README.md` (a CUDA crash, then a
+  transformers library error, then a raw SIGSEGV on a single BGE-M3
+  load that has worked reliably dozens of times earlier this session) —
+  a real machine restart is needed before this can be confirmed against
+  a live model rather than mocked ones. The citation-parsing and
+  sources-building logic itself (`CitationService`, `ChatService.
+  _build_sources`) is plain Python string/dict handling with no ML
+  dependency, so it's exactly as trustworthy as its test coverage; what's
+  unverified is only whether Qwen2.5:3b reliably follows the "[N]" citing
+  instruction in practice, which needs a real model to check.
 - **No OCR fallback** — scanned (image-only) PDFs will parse to near-empty text.
 - **No table/chart/image understanding** — Docling extracts tables as markdown text; nothing structures or reasons over them specially yet.
 - **No conversation memory** — each question is answered independently of chat history.
@@ -157,10 +170,11 @@ This section is deliberately blunt — see it as the project's honest changelog.
 ## Roadmap
 
 Short-term priorities, roughly in order: once the dev machine is stable
-again, calibrate and measure query rewriting and the refusal threshold
-(both implemented, both blocked on the same live-eval instability above);
-a document-scoped retrieval eval alongside the current global one (the
-corpus-crowding finding above); grow the dataset past 50 questions
-(contracts/legal documents, adversarial content); inline citations with
-page-level source highlighting; streaming + markdown in the UI; and a
-Docker Compose setup that works from a clean clone.
+again, live-verify citations against a real model and calibrate/measure
+query rewriting and the refusal threshold (all three implemented, all
+blocked on the same instability above); a document-scoped retrieval eval
+alongside the current global one (the corpus-crowding finding above);
+grow the dataset past 50 questions (contracts/legal documents,
+adversarial content); page-level citation highlighting (jump to the
+cited PDF page, not just show the source card); streaming + markdown in
+the UI; and a Docker Compose setup that works from a clean clone.

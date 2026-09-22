@@ -12,9 +12,16 @@ class PromptBuilder:
     """
     Builds prompts for the LLM using retrieved document chunks.
 
-    Returns a (system, user) pair rather than one blob, so the
-    instructions can be sent as an actual `system` message instead
-    of being smuggled into the `user` turn.
+    Returns a (system, user, contexts) triple rather than one blob:
+    system/user so the instructions can be sent as an actual `system`
+    message instead of being smuggled into the `user` turn, and
+    `contexts` (the exact, budget-trimmed list of chunks that ended
+    up in the prompt, in "Context N" order) so a caller can build a
+    sources list whose indices line up exactly with the [N] citation
+    markers the model was told to use. Building `contexts` any other
+    way (e.g. re-deriving it from the original retrieved_chunks list)
+    risks a citation pointing at the wrong source if budget trimming
+    dropped anything.
     """
 
     SYSTEM_PROMPT = (
@@ -30,8 +37,11 @@ class PromptBuilder:
         "5. Ignore near-duplicate passages.\n"
         "6. Keep answers concise, factual and well formatted (use lists or "
         "short paragraphs where that helps readability).\n"
-        "7. When you use a fact from a specific document, you may refer to it "
-        "by its document title."
+        "7. Cite your sources inline using the context number in square "
+        "brackets, e.g. [1], right after the sentence or clause it "
+        "supports. Use [2][3] if two contexts both support the same "
+        "fact. Cite every factual claim you make from the context; do "
+        "not cite a context you did not actually use."
     )
 
     NO_CONTEXT_MESSAGE = (
@@ -43,9 +53,11 @@ class PromptBuilder:
         cls,
         question: str,
         retrieved_chunks: list[RetrievedChunk],
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, list[RetrievedChunk]]:
         """
-        Build the (system, user) messages for the language model.
+        Build the (system, user, contexts) triple for the language
+        model. `contexts` is empty when there was no context to
+        answer from.
         """
 
         if not retrieved_chunks:
@@ -58,7 +70,7 @@ class PromptBuilder:
                 f"QUESTION:\n{question}\n\n"
                 f"Respond with: \"{cls.NO_CONTEXT_MESSAGE}\""
             )
-            return cls.SYSTEM_PROMPT, user
+            return cls.SYSTEM_PROMPT, user, []
 
         retrieved_chunks = cls._fit_to_context_budget(retrieved_chunks)
 
@@ -98,7 +110,7 @@ class PromptBuilder:
             f"{question}"
         )
 
-        return cls.SYSTEM_PROMPT, user
+        return cls.SYSTEM_PROMPT, user, retrieved_chunks
 
     @classmethod
     def _fit_to_context_budget(

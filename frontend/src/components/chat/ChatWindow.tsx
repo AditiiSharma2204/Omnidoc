@@ -221,7 +221,7 @@ export default function ChatWindow() {
               text={message.text}
             />
 
-            {message.sources && (
+            {message.sources && message.sources.length > 0 && (
 
               <div className="ml-3">
 
@@ -231,19 +231,39 @@ export default function ChatWindow() {
 
                 <div className="space-y-2">
 
-                  {message.sources.map((source, idx) => (
+                  {message.sources.map((source) => (
 
                     <div
-                      key={idx}
-                      className="bg-white border rounded-lg p-3 text-sm"
+                      key={source.index}
+                      className={`border rounded-lg p-3 text-sm ${
+                        source.cited
+                          ? "bg-white border-blue-200"
+                          : "bg-gray-50 border-gray-200 opacity-60"
+                      }`}
                     >
-                      <div className="font-medium">
+                      <div className="font-medium flex items-center gap-2">
+                        <span
+                          className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-semibold ${
+                            source.cited
+                              ? "bg-blue-100 text-blue-700"
+                              : "bg-gray-200 text-gray-500"
+                          }`}
+                        >
+                          {source.index}
+                        </span>
                         📄 {source.document}
                       </div>
 
                       <div className="text-gray-500">
                         {source.heading}
+                        {source.page != null && ` · p.${source.page}`}
                       </div>
+
+                      {!source.cited && (
+                        <div className="text-xs text-gray-400 mt-1">
+                          Retrieved but not cited in the answer
+                        </div>
+                      )}
                     </div>
 
                   ))}

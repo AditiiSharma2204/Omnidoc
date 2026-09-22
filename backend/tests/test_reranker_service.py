@@ -301,9 +301,10 @@ class TestScoreThreshold:
         """
         from app.prompts.prompt_builder import PromptBuilder
 
-        system, user = PromptBuilder.build(
+        system, user, contexts = PromptBuilder.build(
             question="What is this person's name?",
             retrieved_chunks=[],
         )
 
         assert PromptBuilder.NO_CONTEXT_MESSAGE in user
+        assert contexts == []

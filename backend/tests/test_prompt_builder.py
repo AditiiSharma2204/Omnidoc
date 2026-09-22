@@ -18,7 +18,7 @@ def _chunk(text, score=0.9, title="Doc.pdf", heading="Heading", **kw):
 class TestNoContext:
 
     def test_no_chunks_asks_model_to_say_it_cant_find_it(self):
-        system, user = PromptBuilder.build(
+        system, user, contexts = PromptBuilder.build(
             question="What is the capital of France?",
             retrieved_chunks=[],
         )
@@ -26,6 +26,7 @@ class TestNoContext:
         assert "OmniDoc AI" in system
         assert PromptBuilder.NO_CONTEXT_MESSAGE in user
         assert "capital of France" in user
+        assert contexts == []
 
 
 class TestSystemUserSplit:
@@ -33,7 +34,7 @@ class TestSystemUserSplit:
     def test_returns_separate_system_and_user_messages(self):
         chunks = [_chunk("Some retrieved content.")]
 
-        system, user = PromptBuilder.build(
+        system, user, contexts = PromptBuilder.build(
             question="What does it say?",
             retrieved_chunks=chunks,
         )
@@ -47,6 +48,7 @@ class TestSystemUserSplit:
         # not the instruction rules baked in.
         assert "Some retrieved content." in user
         assert "What does it say?" in user
+        assert contexts == chunks
 
     def test_no_leading_whitespace_indentation_bug(self):
         """
@@ -55,7 +57,7 @@ class TestSystemUserSplit:
         """
         chunks = [_chunk("content")]
 
-        _, user = PromptBuilder.build("question", chunks)
+        _, user, _contexts = PromptBuilder.build("question", chunks)
 
         for line in user.splitlines():
             assert not line.startswith("    "), (
@@ -63,14 +65,42 @@ class TestSystemUserSplit:
             )
 
 
+class TestCitationInstruction:
+
+    def test_system_prompt_instructs_bracket_citations(self):
+        system, _, _ = PromptBuilder.build("q", [_chunk("content")])
+
+        assert "[1]" in system
+
+    def test_context_numbering_matches_returned_contexts_order(self):
+        """
+        A caller builds a citation-aligned sources list by enumerating
+        `contexts` 1-indexed -- this must exactly match the "Context
+        N" numbers the model actually sees in the prompt.
+        """
+        chunks = [
+            _chunk("first", chunk_id="c1"),
+            _chunk("second", chunk_id="c2"),
+            _chunk("third", chunk_id="c3"),
+        ]
+
+        _, user, contexts = PromptBuilder.build("q", chunks)
+
+        assert [c.chunk_id for c in contexts] == ["c1", "c2", "c3"]
+        assert "Context 1" in user
+        assert "Context 2" in user
+        assert "Context 3" in user
+
+
 class TestContextBudget:
 
     def test_fits_under_budget_keeps_all_chunks(self):
         chunks = [_chunk("short " * 5) for _ in range(3)]
 
-        _, user = PromptBuilder.build("q", chunks)
+        _, user, contexts = PromptBuilder.build("q", chunks)
 
         assert user.count("Context ") == 3
+        assert len(contexts) == 3
 
     def test_oversized_context_is_trimmed_not_sent_raw(
         self, monkeypatch
@@ -86,12 +116,15 @@ class TestContextBudget:
 
         big_chunks = [_chunk("x" * 500) for _ in range(5)]
 
-        _, user = PromptBuilder.build("q", big_chunks)
+        _, user, contexts = PromptBuilder.build("q", big_chunks)
 
         # Must keep at least one chunk and must not include all five
         # full-size blobs verbatim.
         assert user.count("Context ") < 5
         assert user.count("Context ") >= 1
+        # contexts must reflect exactly what's in the prompt, not the
+        # original untrimmed list.
+        assert len(contexts) == user.count("Context ")
 
     def test_always_keeps_at_least_one_chunk_even_if_oversized(
         self, monkeypatch
@@ -105,6 +138,7 @@ class TestContextBudget:
 
         chunks = [_chunk("x" * 10000)]
 
-        _, user = PromptBuilder.build("q", chunks)
+        _, user, contexts = PromptBuilder.build("q", chunks)
 
         assert user.count("Context ") == 1
+        assert len(contexts) == 1

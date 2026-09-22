@@ -8,9 +8,11 @@ class ChatRequest(BaseModel):
 
 
 class Source(BaseModel):
+    index: int
     document: str
     heading: str | None = None
     page: int | None = None
+    cited: bool
 
 
 class ChatResponse(BaseModel):
