@@ -206,15 +206,55 @@ class RetrievalService:
         top_k: int = 5,
         document_ids: list[str] | None = None,
         mode: str | None = None,
+        rerank: bool | None = None,
     ) -> list[RetrievedChunk]:
         """
         Search the indexed corpus and return deduplicated chunks,
         best first.
 
         `document_ids`, when given, restricts results to those
-        documents. `mode` overrides settings.RETRIEVAL_MODE for this
-        call (used by the eval harness to A/B dense vs. hybrid
-        without touching global config).
+        documents. `mode` overrides settings.RETRIEVAL_MODE and
+        `rerank` overrides settings.RERANK_ENABLED for this call
+        (used by the eval harness to A/B without touching global
+        config).
+        """
+        should_rerank = (
+            settings.RERANK_ENABLED if rerank is None else rerank
+        )
+
+        fetch_k = (
+            top_k * settings.RERANK_CANDIDATE_MULTIPLIER
+            if should_rerank
+            else top_k
+        )
+
+        candidates = cls._retrieve(query, fetch_k, document_ids, mode)
+
+        if not should_rerank:
+            return candidates[:top_k]
+
+        # Local import avoids a hard dependency for callers that
+        # never rerank (e.g. it keeps the reranker model out of the
+        # import chain for a pure dense/bm25 comparison in the eval
+        # harness's --compare-modes).
+        from app.services.reranker_service import RerankerService
+
+        return RerankerService.rerank(query, candidates, top_k)
+
+    @classmethod
+    def _retrieve(
+        cls,
+        query: str,
+        top_k: int,
+        document_ids: list[str] | None,
+        mode: str | None,
+    ) -> list[RetrievedChunk]:
+        """
+        Runs the selected retrieval mode (dense/bm25/hybrid) and
+        returns up to top_k candidates, best first. Split out from
+        `search()` so reranking can request a wider candidate pool
+        than the final top_k without duplicating the dense/bm25/
+        hybrid dispatch logic.
         """
         mode = mode or settings.RETRIEVAL_MODE
 

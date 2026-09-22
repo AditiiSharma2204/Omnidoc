@@ -81,7 +81,7 @@ class TestHybridFusion:
             {("doc-a", "c1"): 5.0, ("doc-a", "c2"): 1.0}
         )
 
-        results = RetrievalService.search("q", top_k=5, mode="hybrid")
+        results = RetrievalService.search("q", top_k=5, mode="hybrid", rerank=False)
 
         assert results[0].chunk_id == "c1"
 
@@ -98,7 +98,7 @@ class TestHybridFusion:
             {("doc-a", "c2"): 8.0, ("doc-a", "c1"): 1.0}
         )
 
-        results = RetrievalService.search("q", top_k=5, mode="hybrid")
+        results = RetrievalService.search("q", top_k=5, mode="hybrid", rerank=False)
 
         chunk_ids = [r.chunk_id for r in results]
         assert "c2" in chunk_ids
@@ -109,7 +109,7 @@ class TestHybridFusion:
         stub_dense({("doc-a", "c1"): 0.9})
         stub_bm25({("doc-a", "c2"): 5.0})
 
-        results = RetrievalService.search("q", top_k=5, mode="hybrid")
+        results = RetrievalService.search("q", top_k=5, mode="hybrid", rerank=False)
 
         assert {r.chunk_id for r in results} == {"c1", "c2"}
 
@@ -119,7 +119,7 @@ class TestHybridFusion:
         stub_dense({("doc-a", "c1"): 0.9})
         stub_bm25({("doc-a", "c2"): 5.0})
 
-        results = RetrievalService.search("q", top_k=5, mode="dense")
+        results = RetrievalService.search("q", top_k=5, mode="dense", rerank=False)
 
         assert [r.chunk_id for r in results] == ["c1"]
 
@@ -129,7 +129,7 @@ class TestHybridFusion:
         stub_dense({("doc-a", "c1"): 0.9})
         stub_bm25({("doc-a", "c2"): 5.0})
 
-        results = RetrievalService.search("q", top_k=5, mode="bm25")
+        results = RetrievalService.search("q", top_k=5, mode="bm25", rerank=False)
 
         assert [r.chunk_id for r in results] == ["c2"]
 
@@ -138,7 +138,7 @@ class TestHybridFusion:
         stub_bm25({})
 
         with pytest.raises(ValueError):
-            RetrievalService.search("q", top_k=5, mode="nonsense")
+            RetrievalService.search("q", top_k=5, mode="nonsense", rerank=False)
 
     def test_top_k_is_respected_after_fusion(
         self, stub_dense, stub_bm25
@@ -152,7 +152,7 @@ class TestHybridFusion:
         )
         stub_bm25({})
 
-        results = RetrievalService.search("q", top_k=2, mode="hybrid")
+        results = RetrievalService.search("q", top_k=2, mode="hybrid", rerank=False)
 
         assert len(results) == 2
 

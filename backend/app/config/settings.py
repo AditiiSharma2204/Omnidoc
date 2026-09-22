@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     RETRIEVAL_MODE: str = "hybrid"
     RRF_K: int = 60
 
+    # Cross-encoder reranking: re-scores the top RERANK_CANDIDATE_MULTIPLIER
+    # * top_k fused candidates with a model that sees the actual
+    # (query, chunk) pair jointly, instead of comparing independently
+    # computed embeddings. Slower per-query (one forward pass per
+    # candidate) but more accurate at the top of the ranking -- see
+    # backend/eval/README.md for the measured before/after. Picked a
+    # small model (~500MB resident, vs. ~2GB for BGE-M3) deliberately
+    # given this project's memory constraints (see
+    # DOCLING_DO_OCR/DOCLING_DO_TABLE_STRUCTURE above).
+    RERANK_ENABLED: bool = True
+    RERANKER_MODEL_NAME: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RERANK_CANDIDATE_MULTIPLIER: int = 4
+
     # Chunking (character-based; ~4 chars/token heuristic)
     CHUNK_MAX_CHARS: int = 1600
     CHUNK_OVERLAP_CHARS: int = 200

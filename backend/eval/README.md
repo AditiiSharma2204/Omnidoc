@@ -56,13 +56,14 @@ that read.
 
 ## Known result (baseline, one document, 2026-09-22)
 
-**Retrieval ablation (dense vs bm25 vs hybrid), `--compare-modes`:**
+**Retrieval ablation (dense vs bm25 vs hybrid vs hybrid+rerank), `--compare-modes`:**
 
-| mode   | Recall@1 | Recall@3 | Recall@5 | MRR   |
-|--------|----------|----------|----------|-------|
-| dense  | 75.0%    | 91.7%    | 91.7%    | 0.833 |
-| bm25   | 91.7%    | 91.7%    | 91.7%    | 0.917 |
-| hybrid | 91.7%    | 91.7%    | 91.7%    | 0.917 |
+| variant       | Recall@1 | Recall@3 | Recall@5 | MRR   |
+|---------------|----------|----------|----------|-------|
+| dense         | 75.0%    | 91.7%    | 91.7%    | 0.833 |
+| bm25          | 91.7%    | 91.7%    | 91.7%    | 0.917 |
+| hybrid        | 91.7%    | 91.7%    | 91.7%    | 0.917 |
+| hybrid+rerank | 100.0%   | 100.0%   | 100.0%   | 1.000 |
 
 Hybrid matches or beats dense-only at every k, with **zero
 per-question regressions** (checked by hand, not just the aggregate).
@@ -71,18 +72,36 @@ because most questions are exact-term technical lookups (company
 names, tool names) that lexical search is naturally good at; hybrid
 ties it rather than losing anything by also blending in dense scores.
 
-**Important, and corrected from an earlier draft of this doc:** hybrid
-retrieval does **not** fix every miss. *"What is this person's name?"*
-is still wrong at every k in **all three modes** — dense ranks a
-generic "Summary" chunk above the short chunk whose heading is the
-name (as expected), but BM25 finds nothing either, because the query
-("what... person... name") shares zero vocabulary with the document
-(which never uses the word "name"). Hybrid can only fuse rankings that
-already contain some signal; it can't invent relevance neither
-retrieval mode found. This particular gap needs query rewriting/
-expansion, not better fusion — don't claim a fix you haven't measured,
-which is exactly the mistake an earlier version of this note made
-before the ablation was actually run.
+Hybrid retrieval, by itself, does **not** fix every miss (this section
+previously claimed it would, before the ablation was actually run —
+corrected once measured; see `verify-before-claiming-fixes` project
+memory for the lesson). *"What is this person's name?"* was still
+wrong at every k in dense, bm25 and hybrid — dense ranks a generic
+"Summary" chunk above the short chunk whose heading is the name, and
+BM25 finds nothing either, because the query ("what... person...
+name") shares zero vocabulary with the document (which never uses the
+word "name"). Fusion can't invent relevance neither retrieval mode
+found.
+
+**The cross-encoder reranker did fix it, verified directly** (not just
+via the aggregate number — checked which chunk the reranker scores
+highest for that exact query, and it's the right one). Cross-encoders
+see the (query, chunk) pair jointly instead of comparing independently
+computed scores, so they can pick up the name from *within* the
+chunk's content even when neither the embedding similarity nor the
+literal query wording pointed there.
+
+**Caveat that matters for interpreting these numbers:** the corpus
+right now is one document, 10 chunks. `RERANK_CANDIDATE_MULTIPLIER=4`
+with `top_k=5` means reranking fetches top 20 candidates — more than
+exist, so the reranker is effectively scoring the *entire corpus*, not
+narrowing down from a large candidate pool the way it would in
+production. This result shows the reranker is *correctly wired and
+works* at the mechanism level; it is not yet evidence that reranking
+scales retrieval quality on a realistically-sized corpus. Re-run this
+ablation once the corpus has hundreds of chunks across the 5-10
+documents this dataset still needs (see "Extending the dataset" below)
+before treating "100%" as more than a smoke test.
 
 **Generation:** factual keyword-hit rate 100% (12/12), refusal rate on
 unanswerable questions 100% (3/3) — but reading `per_question` by hand
