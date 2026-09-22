@@ -22,7 +22,7 @@ python -m eval.run_eval --with-generation
 # Report Recall@1/3/5 instead of the default
 python -m eval.run_eval --top-k 1 3 5
 
-# Ablation: dense vs bm25 vs hybrid retrieval, side by side
+# Ablation: dense vs bm25 vs hybrid vs hybrid+rerank, side by side
 python -m eval.run_eval --compare-modes
 ```
 
@@ -54,93 +54,80 @@ quoting any generation number publicly (a README, a resume bullet,
 etc.) — the harness exists to catch regressions fast, not to replace
 that read.
 
-## Known result (baseline, one document, 2026-09-22)
+## Known result (5 documents, 36 questions, 2026-09-22)
+
+The corpus now covers 5 document types indexed together: a resume
+(PDF), a career/salary analysis (XLSX), a conference presentation
+(PPTX), a dataset-analysis report (DOCX), and an academic paper (PDF)
+— ~50+ chunks total, up from the original single-document/10-chunk
+seed. This matters: several findings below only showed up once the
+corpus was large enough for retrieval and candidate-pool size to
+actually matter.
 
 **Retrieval ablation (dense vs bm25 vs hybrid vs hybrid+rerank), `--compare-modes`:**
 
 | variant       | Recall@1 | Recall@3 | Recall@5 | MRR   |
 |---------------|----------|----------|----------|-------|
-| dense         | 75.0%    | 91.7%    | 91.7%    | 0.833 |
-| bm25          | 91.7%    | 91.7%    | 91.7%    | 0.917 |
-| hybrid        | 91.7%    | 91.7%    | 91.7%    | 0.917 |
-| hybrid+rerank | 100.0%   | 100.0%   | 100.0%   | 1.000 |
+| dense         | 71.0%    | 90.3%    | 96.8%    | 0.821 |
+| bm25          | 74.2%    | 90.3%    | 93.5%    | 0.831 |
+| hybrid        | 77.4%    | 96.8%    | 96.8%    | 0.866 |
+| hybrid+rerank | 83.9%    | 96.8%    | 96.8%    | 0.903 |
 
-Hybrid matches or beats dense-only at every k, with **zero
-per-question regressions** (checked by hand, not just the aggregate).
-On this seed set BM25 alone is actually the strongest single signal,
-because most questions are exact-term technical lookups (company
-names, tool names) that lexical search is naturally good at; hybrid
-ties it rather than losing anything by also blending in dense scores.
+Every stage improves Recall@1 and MRR monotonically. This is the
+result of an actual, evidence-driven tuning pass, not the first
+number produced — worth walking through because the process is the
+real point:
 
-Hybrid retrieval, by itself, does **not** fix every miss (this section
-previously claimed it would, before the ablation was actually run —
-corrected once measured; see `verify-before-claiming-fixes` project
-memory for the lesson). *"What is this person's name?"* was still
-wrong at every k in dense, bm25 and hybrid — dense ranks a generic
-"Summary" chunk above the short chunk whose heading is the name, and
-BM25 finds nothing either, because the query ("what... person...
-name") shares zero vocabulary with the document (which never uses the
-word "name"). Fusion can't invent relevance neither retrieval mode
-found.
+**A regression was found and fixed, not just a win reported.** The
+first hybrid+rerank run on this expanded corpus actually *regressed*
+Recall@3/5 versus plain hybrid (93.5% vs 96.8%) even though Recall@1
+and MRR improved. Diagnosed by checking exactly which question
+newly failed (`RetrievalService._retrieve` gives the pre-rerank
+candidate pool directly) rather than guessing: the correct chunk for
+*"What is this person's name?"* wasn't merely ranked low by the
+reranker — it wasn't in the pre-rerank candidate pool AT ALL.
+`RERANK_CANDIDATE_MULTIPLIER=4` with `top_k=5` fetches only the top 20
+hybrid-ranked candidates before reranking; on the old 10-chunk corpus
+that was effectively the whole corpus, but on ~50+ chunks across 5
+documents, a paper-heavy set of results crowded the right chunk out
+before the reranker ever got a chance to see it (a reranker can only
+reorder what it's given). Tested multiplier 4 vs 8 vs 12 directly:
+8 fully recovered Recall@5 to 96.8% with no further gain from 12, so
+the default is now 8 (was 4) — a measured value, not a guess.
 
-**The cross-encoder reranker did fix it, verified directly** (not just
-via the aggregate number — checked which chunk the reranker scores
-highest for that exact query, and it's the right one). Cross-encoders
-see the (query, chunk) pair jointly instead of comparing independently
-computed scores, so they can pick up the name from *within* the
-chunk's content even when neither the embedding similarity nor the
-literal query wording pointed there.
+**One residual miss, and it's the same underlying pattern as the
+regression above, not a new bug:** *"Who are the authors of the
+Re-MTKD paper?"* (`expected_keywords: ["Zeqin Yu"]`, which does appear
+verbatim in the paper's byline chunk) still misses at every variant.
+Same root cause as the original *"what is this person's name?"* case
+from the single-document baseline: a query asking "who/what is X's
+name" shares no vocabulary with a byline/title chunk that just states
+the name without ever using words like "author" or "name". Neither
+lexical nor dense retrieval has a way to bridge that gap, and
+reranking can't invent a candidate that never made the pool. This
+needs query rewriting (already on the roadmap), not a retrieval tweak.
 
-**Caveat that matters for interpreting these numbers:** the corpus
-right now is one document, 10 chunks. `RERANK_CANDIDATE_MULTIPLIER=4`
-with `top_k=5` means reranking fetches top 20 candidates — more than
-exist, so the reranker is effectively scoring the *entire corpus*, not
-narrowing down from a large candidate pool the way it would in
-production. This result shows the reranker is *correctly wired and
-works* at the mechanism level; it is not yet evidence that reranking
-scales retrieval quality on a realistically-sized corpus. Re-run this
-ablation once the corpus has hundreds of chunks across the 5-10
-documents this dataset still needs (see "Extending the dataset" below)
-before treating "100%" as more than a smoke test.
-
-**Generation:** factual keyword-hit rate 100% (12/12), refusal rate on
-unanswerable questions 100% (3/3) — but reading `per_question` by hand
-(as this doc tells you to) surfaces real issues the headline numbers
-hide:
-- The database-technologies question's retrieved chunk lists
-  `MongoDB, MySQL`; the answer said *"SQL and MySQL"*, dropping MongoDB
-  and miscategorizing SQL as a database technology. Still scored a
-  "hit" because the metric only required 1 of 2 keywords.
-- The cloud/DevOps-tools answer is genuinely garbled ("lists Git/GitHub
-  as a tool & technology related to Git/GitHub, and Docker as a
-  framework & library related to Docker") — low-quality phrasing from
-  the 3B model, invisible to a keyword check.
-- The name question's answer is *correct* despite retrieval missing
-  the right chunk (above) — most likely because every context block in
-  the prompt includes `Document: Aditii_Resume.pdf`, and the model
-  pattern-matched the filename into a name rather than reading it from
-  retrieved content. That's a real, subtle grounding risk: it worked
-  here by coincidence (the filename happens to be the person's name)
-  and would silently fail on a document whose filename doesn't match
-  its content.
-
-This is exactly why this harness is worth having, and why its own
-README tells you not to trust the summary numbers blindly: "100%/100%"
-reads as a finished system; a five-minute manual read of the same
-report finds two real answer-quality bugs and one grounding risk that
-a keyword check can't see.
+**Historical, from the original 1-document baseline (not yet re-run on
+the 5-document corpus — see below):** generation (`--with-generation`)
+scored 100% factual keyword-hit and 100% correct refusal, but manual
+review of `per_question` found real issues the automated metrics
+missed: one answer dropped a fact ("MongoDB") from a correctly
+retrieved chunk, one answer was genuinely garbled prose, and the name
+question was answered correctly despite retrieval missing the target
+chunk — most likely because the prompt's `Document: Aditii_Resume.pdf`
+line let the model infer the name from the filename rather than
+retrieved content, a real grounding risk that happened to work by
+coincidence. **Re-running `--with-generation` on the expanded 36-question
+corpus is a pending follow-up**, not yet done (each question is a real,
+slow LLM call — budget significant time for 36 of them on this
+hardware).
 
 ## Extending the dataset
 
-`dataset.json`'s `_readme` field says what's still missing: right now
-it covers one document type. Before trusting these numbers as a real
-benchmark:
-
-1. Upload 5-10 documents of different types (paper, contract/report,
-   slides, spreadsheet) alongside the resume.
-2. Add ~5 questions per document to `dataset.json`'s `items` list,
-   following the existing `factual`/`unanswerable` shape.
-3. Re-read each `expected_keywords` list against the actual source
-   document — a wrong expected answer makes every downstream number
-   wrong.
-4. Aim for 50+ questions total per the improvement plan.
+Progress against the original plan: ✅ 5 documents of different types
+(was 1), ✅ per-`expected_keywords` verification against actual parsed
+content (see `dataset.json`'s `_readme`). Still short of the 50+
+question target (currently 36) and still all personal/academic files
+from one person — no contracts, legal documents, or genuinely
+adversarial content (e.g. a document deliberately containing text that
+looks like a prompt injection). Both are reasonable next additions.

@@ -74,13 +74,10 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 - **No streaming in the UI yet.** The `/chat/stream` endpoint exists; the frontend isn't wired to it.
 - **No markdown rendering in the chat UI.**
-- **Reranker's measured benefit is a smoke test, not yet proof it scales.**
-  Retrieval is hybrid (BM25 + dense, RRF-fused) with a cross-encoder
-  reranker on top, and the full stack measures 100% Recall@5 on the seed
-  set (see `backend/eval/README.md`) — but the corpus is currently one
-  document (10 chunks), smaller than the reranker's candidate pool, so
-  it's effectively reranking the whole corpus rather than narrowing down
-  a large one. Re-validate once the corpus is realistically sized.
+- **No query rewriting.** Retrieval (hybrid BM25+dense, cross-encoder
+  reranked) still can't answer a "who/what is X" query whose target chunk
+  shares no vocabulary with the question — see the evaluation harness bullet
+  below for a specific, measured example.
 - **No OCR fallback** — scanned (image-only) PDFs will parse to near-empty text.
 - **No table/chart/image understanding** — Docling extracts tables as markdown text; nothing structures or reasons over them specially yet.
 - **No conversation memory** — each question is answered independently of chat history.
@@ -99,34 +96,35 @@ This section is deliberately blunt — see it as the project's honest changelog.
   before heavy local work. If you still hit a crash, free up RAM or reduce
   concurrent load; a proper fix (ingestion in an isolated worker process)
   is on the roadmap.
-- **Evaluation harness exists but is small and single-document.** See
-  `backend/eval/` — a 15-question seed set with retrieval (Recall@k, MRR,
-  and a dense/bm25/hybrid/hybrid+rerank ablation via `--compare-modes`) and
-  generation (keyword-hit, refusal-rate) metrics. Hybrid retrieval alone
-  measurably beats dense-only (Recall@1 75%→91.7%, MRR 0.83→0.92, zero
-  per-question regressions) but left one question wrong at every k — a
-  query sharing no vocabulary with its target chunk, which no amount of
-  fusion can fix. Adding the cross-encoder reranker on top did fix it
-  (verified directly, not just via the aggregate), reaching 100%/1.000 —
-  but the corpus right now is smaller than the reranker's candidate pool,
-  so that 100% is a mechanism smoke test, not proof it scales; needs
-  re-validating on a realistically-sized corpus. Manual review of the
-  generation run also found two real answer-quality issues and one
-  grounding risk the automated metrics missed. See
-  `backend/eval/README.md`'s "Known result" section for the full,
-  unvarnished writeup — the harness explicitly warns against trusting its
-  summary numbers without reading `per_question`, and that warning has
-  already caught a wrong claim once (an earlier draft of this project
-  assumed hybrid alone would fix the query above; it didn't, and the docs were
-  corrected once actually measured). Needs expanding to 50+ questions
-  across varied document types before it's a real benchmark.
+- **Evaluation harness exists, covers 5 document types, still short of the
+  50+ question target.** See `backend/eval/` — 36 questions (resume, career/
+  salary spreadsheet, conference slides, a dataset report, an academic paper)
+  with retrieval (Recall@k, MRR) and generation (keyword-hit, refusal-rate)
+  metrics, plus a dense/bm25/hybrid/hybrid+rerank ablation
+  (`--compare-modes`). Every retrieval stage improves Recall@1 and MRR
+  monotonically (dense 71.0%/0.821 → bm25 74.2%/0.831 → hybrid 77.4%/0.866 →
+  hybrid+rerank 83.9%/0.903). Getting there included finding and fixing a
+  real regression: the first reranked run on this corpus actually
+  *regressed* Recall@5 versus plain hybrid, diagnosed to the reranker's
+  candidate pool being too narrow (a relevant chunk was crowded out before
+  reranking ever saw it) and fixed by measuring pool sizes directly rather
+  than guessing (`RERANK_CANDIDATE_MULTIPLIER` 4→8). One residual miss
+  remains — a name/author lookup whose target chunk shares no vocabulary
+  with the query, the same pattern a smaller-corpus run first surfaced;
+  needs query rewriting, not a retrieval tweak. Generation hasn't been
+  re-run on this expanded corpus yet (still reflects the original
+  single-document run). See `backend/eval/README.md`'s "Known result"
+  section for the full writeup — the harness explicitly warns against
+  trusting its summary numbers without reading `per_question`, and that
+  warning has already caught a wrong claim once (an earlier draft assumed
+  hybrid alone would fix the query above; it didn't, and the docs were
+  corrected once actually measured).
 
 ## Roadmap
 
-Short-term priorities, roughly in order: expand the evaluation harness to
-a realistically-sized corpus (to properly validate hybrid retrieval and
-reranking rather than the current single-document smoke test), query
-rewriting (to address the vocabulary-mismatch gap above), inline citations
-with page-level source highlighting, streaming + markdown in the UI, and
-a Docker Compose setup that works from a
+Short-term priorities, roughly in order: query rewriting (to address the
+vocabulary-mismatch gap above), re-run the generation eval on the expanded
+corpus and grow the dataset past 50 questions (contracts/legal documents,
+adversarial content), inline citations with page-level source highlighting,
+streaming + markdown in the UI, and a Docker Compose setup that works from a
 clean clone.

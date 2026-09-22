@@ -1,5 +1,5 @@
 {
-  "_readme": "Seed evaluation set. THIS IS A STARTING POINT, NOT A FINISHED BENCHMARK. It currently covers one document (a resume PDF) because that's what's indexed. Before trusting any number this harness reports: (1) verify expected_keywords actually reflect a correct answer by re-reading the source document, (2) expand to 5-10 documents of different types (paper, contract/report, slides, spreadsheet) per the improvement plan, (3) aim for 50+ questions total. Each item's category is 'factual' (answerable from the indexed document(s)) or 'unanswerable' (deliberately out of scope, to test the refusal path).",
+  "_readme": "Evaluation set covering 5 documents of different types, indexed together: a resume (PDF), a career/salary analysis (XLSX), a conference presentation (PPTX), a dataset-analysis report (DOCX), and an academic paper (PDF). Every expected_keywords entry was verified by hand against the actual parsed chunk text on 2026-09-22 (not guessed) -- see backend/eval/README.md for how. Still a seed set, not a finished benchmark: 36 questions is short of the 50+ target, all documents are from one person's personal/academic files (no contracts, legal docs, or genuinely adversarial content), and the XLSX questions deliberately avoid specific numbers because Docling's table-structure model is disabled by default in this project (see settings.DOCLING_DO_TABLE_STRUCTURE) and its markdown table export sometimes misaligns columns -- a good illustration of why that's a real, documented limitation and not just a settings toggle nobody will notice. Each item's category is 'factual' (answerable from the indexed document(s)) or 'unanswerable' (deliberately out of scope, to test the refusal path).",
   "items": [
     {
       "id": "q1",
@@ -90,6 +90,151 @@
       "question": "Summarize this person's PhD thesis.",
       "category": "unanswerable",
       "notes": "Presupposes something false (a PhD thesis) -- checks the system doesn't play along with a false premise."
+    },
+    {
+      "id": "q16",
+      "question": "What skills are needed for a Junior BI Analyst role in Germany?",
+      "category": "factual",
+      "expected_keywords": ["Power BI", "SQL"],
+      "source_document": "Germany_Career_Roles_Salary_2026.xlsx"
+    },
+    {
+      "id": "q17",
+      "question": "What does an IT Project Manager role involve, according to the career analysis?",
+      "category": "factual",
+      "expected_keywords": ["Schedules", "budgets", "stakeholders"],
+      "source_document": "Germany_Career_Roles_Salary_2026.xlsx"
+    },
+    {
+      "id": "q18",
+      "question": "What skills are required for a Junior ML Engineer / AI Engineer role?",
+      "category": "factual",
+      "expected_keywords": ["Python", "PyTorch"],
+      "source_document": "Germany_Career_Roles_Salary_2026.xlsx"
+    },
+    {
+      "id": "q19",
+      "question": "What source website was used for the career and salary analysis?",
+      "category": "factual",
+      "expected_keywords": ["StepStone"],
+      "source_document": "Germany_Career_Roles_Salary_2026.xlsx"
+    },
+    {
+      "id": "q20",
+      "question": "What career path is described as a bridge between an AI/data profile and client-facing business work?",
+      "category": "factual",
+      "expected_keywords": ["consultant"],
+      "source_document": "Germany_Career_Roles_Salary_2026.xlsx"
+    },
+    {
+      "id": "q21",
+      "question": "What is the title of the BIDA 2026 conference presentation?",
+      "category": "factual",
+      "expected_keywords": ["Sign Language Storytelling"],
+      "source_document": "BIDA2026_Paper_Presentation.pptx"
+    },
+    {
+      "id": "q22",
+      "question": "Which university/institute conducted the sign language storytelling research?",
+      "category": "factual",
+      "expected_keywords": ["SRMIST"],
+      "source_document": "BIDA2026_Paper_Presentation.pptx"
+    },
+    {
+      "id": "q23",
+      "question": "What are the text preprocessing steps described in the sign language system?",
+      "category": "factual",
+      "expected_keywords": ["lowercase", "punctuation"],
+      "source_document": "BIDA2026_Paper_Presentation.pptx"
+    },
+    {
+      "id": "q24",
+      "question": "How does the proposed sign language system's accuracy compare to the Sign4PSL system?",
+      "category": "factual",
+      "expected_keywords": ["Sign4PSL", "0.83"],
+      "source_document": "BIDA2026_Paper_Presentation.pptx"
+    },
+    {
+      "id": "q25",
+      "question": "What prior sign language datasets are mentioned as related work?",
+      "category": "factual",
+      "expected_keywords": ["How2Sign", "WLASL"],
+      "source_document": "BIDA2026_Paper_Presentation.pptx"
+    },
+    {
+      "id": "q26",
+      "question": "What is the IDNet dataset used for?",
+      "category": "factual",
+      "expected_keywords": ["fraud detection"],
+      "source_document": "IDNet_Dataset_Analysis.docx"
+    },
+    {
+      "id": "q27",
+      "question": "How many identity document images does the IDNet dataset contain in total?",
+      "category": "factual",
+      "expected_keywords": ["837,060"],
+      "source_document": "IDNet_Dataset_Analysis.docx"
+    },
+    {
+      "id": "q28",
+      "question": "How many authentic documents exist per document type in the IDNet dataset?",
+      "category": "factual",
+      "expected_keywords": ["5,979"],
+      "source_document": "IDNet_Dataset_Analysis.docx"
+    },
+    {
+      "id": "q29",
+      "question": "What is face morphing, as a fraud type in the IDNet dataset?",
+      "category": "factual",
+      "expected_keywords": ["Face Morphing", "blends"],
+      "source_document": "IDNet_Dataset_Analysis.docx"
+    },
+    {
+      "id": "q30",
+      "question": "What is the title of the image forgery detection paper?",
+      "category": "factual",
+      "expected_keywords": ["Reinforced Multi-teacher Knowledge Distillation"],
+      "source_document": "DeepID.pdf"
+    },
+    {
+      "id": "q31",
+      "question": "What problem does the Re-MTKD paper address?",
+      "category": "factual",
+      "expected_keywords": ["forgery detection"],
+      "source_document": "DeepID.pdf"
+    },
+    {
+      "id": "q32",
+      "question": "What framework does the paper propose for image forgery detection?",
+      "category": "factual",
+      "expected_keywords": ["Re-MTKD"],
+      "source_document": "DeepID.pdf"
+    },
+    {
+      "id": "q33",
+      "question": "What architecture does the Cue-Net component use?",
+      "category": "factual",
+      "expected_keywords": ["ConvNeXt"],
+      "source_document": "DeepID.pdf"
+    },
+    {
+      "id": "q34",
+      "question": "Who are the authors of the Re-MTKD paper?",
+      "category": "factual",
+      "expected_keywords": ["Zeqin Yu"],
+      "source_document": "DeepID.pdf"
+    },
+    {
+      "id": "q35",
+      "question": "What is the current exchange rate between USD and EUR?",
+      "category": "unanswerable",
+      "notes": "Not in any of the 5 indexed documents -- and would be stale even if it were, since exchange rates change daily."
+    },
+    {
+      "id": "q36",
+      "question": "Who won the Nobel Prize in Physics in 2025?",
+      "category": "unanswerable",
+      "notes": "Not in any of the 5 indexed documents -- checks the system doesn't answer from the LLM's own training data instead of refusing."
     }
   ]
 }

@@ -44,7 +44,13 @@ class Settings(BaseSettings):
     # DOCLING_DO_OCR/DOCLING_DO_TABLE_STRUCTURE above).
     RERANK_ENABLED: bool = True
     RERANKER_MODEL_NAME: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    RERANK_CANDIDATE_MULTIPLIER: int = 4
+    # Measured, not guessed: on a 5-document/~50-chunk corpus, 4x
+    # (top_k*4=20 candidates) was too narrow -- a paper-heavy corpus
+    # crowded a genuinely relevant chunk out of the pre-rerank pool
+    # entirely for one query, which reranking then had no chance to
+    # recover (it can only reorder what it's given). 8x fixed it with
+    # no further gain from 12x. See backend/eval/README.md.
+    RERANK_CANDIDATE_MULTIPLIER: int = 8
 
     # Chunking (character-based; ~4 chars/token heuristic)
     CHUNK_MAX_CHARS: int = 1600
