@@ -279,7 +279,7 @@ export default function ChatWindow() {
           />
 
           <button
-            onClick={sendMessage}
+            onClick={() => sendMessage()}
             disabled={loading}
             className="bg-blue-600 text-white px-8 rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >

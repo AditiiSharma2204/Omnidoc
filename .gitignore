@@ -48,6 +48,9 @@ backend/storage/vectorstore/*
 # backend/storage/vectorstore) -- not tracked at all.
 /vectorstore/
 
+# Eval harness run output (timestamped, regenerated every run)
+backend/eval/results/
+
 # Ad hoc manual scripts used during early exploration (reference
 # absolute personal paths / removed modules; superseded by the real
 # API + a real test suite).

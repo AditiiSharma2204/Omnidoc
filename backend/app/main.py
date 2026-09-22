@@ -1,27 +1,10 @@
-import os
+from app.bootstrap import apply_local_first_env_fixes
 
-# Defensive fix for a broken local conda env: SSL_CERT_FILE can end
-# up pointing at a cacert.pem that doesn't exist (seen on this
-# machine's `omnidoc` env). httpx/requests then crash constructing
-# an SSL context for ANY HTTPS request -- before offline checks even
-# get a chance to run. Repoint it at certifi's bundle instead of
-# leaving the whole app hostage to one bad env var.
-_ssl_cert_file = os.environ.get("SSL_CERT_FILE")
-if not _ssl_cert_file or not os.path.isfile(_ssl_cert_file):
-    try:
-        import certifi
-
-        os.environ["SSL_CERT_FILE"] = certifi.where()
-    except ImportError:
-        os.environ.pop("SSL_CERT_FILE", None)
-
-# OmniDoc is local-first: once models are cached, nothing should
-# ever make a network call to HuggingFace Hub just to check for
-# updates. This must run before ANYTHING else is imported --
-# docling and sentence-transformers both pull in huggingface_hub
-# transitively, and it reads these env vars once at import time.
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+# Must run before ANYTHING else is imported -- docling and
+# sentence-transformers both pull in huggingface_hub transitively,
+# and it reads these env vars once at import time. See
+# app/bootstrap.py for why this exists.
+apply_local_first_env_fixes()
 
 import logging  # noqa: E402
 from pathlib import Path  # noqa: E402

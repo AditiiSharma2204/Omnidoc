@@ -1,0 +1,95 @@
+{
+  "_readme": "Seed evaluation set. THIS IS A STARTING POINT, NOT A FINISHED BENCHMARK. It currently covers one document (a resume PDF) because that's what's indexed. Before trusting any number this harness reports: (1) verify expected_keywords actually reflect a correct answer by re-reading the source document, (2) expand to 5-10 documents of different types (paper, contract/report, slides, spreadsheet) per the improvement plan, (3) aim for 50+ questions total. Each item's category is 'factual' (answerable from the indexed document(s)) or 'unanswerable' (deliberately out of scope, to test the refusal path).",
+  "items": [
+    {
+      "id": "q1",
+      "question": "What is this person's name?",
+      "category": "factual",
+      "expected_keywords": ["Aditii Sharma"]
+    },
+    {
+      "id": "q2",
+      "question": "What degree is this person pursuing and at which institute?",
+      "category": "factual",
+      "expected_keywords": ["Computer Science", "SRM Institute"]
+    },
+    {
+      "id": "q3",
+      "question": "What internship did this person do at Authenta.ai?",
+      "category": "factual",
+      "expected_keywords": ["Authenta.ai", "Chennai"]
+    },
+    {
+      "id": "q4",
+      "question": "What did this person do during their internship at Inadev Pvt. Ltd.?",
+      "category": "factual",
+      "expected_keywords": ["Inadev", "Video KYC"]
+    },
+    {
+      "id": "q5",
+      "question": "What programming languages are listed under technical skills?",
+      "category": "factual",
+      "expected_keywords": ["Python", "SQL"]
+    },
+    {
+      "id": "q6",
+      "question": "What machine learning frameworks or libraries does this person know?",
+      "category": "factual",
+      "expected_keywords": ["PyTorch", "TensorFlow"]
+    },
+    {
+      "id": "q7",
+      "question": "What is the QuantEdge Investment Advisor project about?",
+      "category": "factual",
+      "expected_keywords": ["QuantEdge", "portfolio"]
+    },
+    {
+      "id": "q8",
+      "question": "What certifications does this person have?",
+      "category": "factual",
+      "expected_keywords": ["NPTEL"]
+    },
+    {
+      "id": "q9",
+      "question": "What achievements or awards are listed?",
+      "category": "factual",
+      "expected_keywords": ["Scholarship"]
+    },
+    {
+      "id": "q10",
+      "question": "What position of responsibility did this person hold in the Coding Ninjas Club?",
+      "category": "factual",
+      "expected_keywords": ["Sponsorship Associate", "Coding Ninjas"]
+    },
+    {
+      "id": "q11",
+      "question": "What database technologies are mentioned in the skills section?",
+      "category": "factual",
+      "expected_keywords": ["MongoDB", "MySQL"]
+    },
+    {
+      "id": "q12",
+      "question": "What cloud or DevOps tools does this person list?",
+      "category": "factual",
+      "expected_keywords": ["Docker"]
+    },
+    {
+      "id": "q13",
+      "question": "What is the capital of France?",
+      "category": "unanswerable",
+      "notes": "Not in the document at all -- must trigger the refusal path, not a hallucinated fact."
+    },
+    {
+      "id": "q14",
+      "question": "What was this person's salary at their internship?",
+      "category": "unanswerable",
+      "notes": "Plausible-sounding but not present in a resume -- checks the system doesn't invent numbers."
+    },
+    {
+      "id": "q15",
+      "question": "Summarize this person's PhD thesis.",
+      "category": "unanswerable",
+      "notes": "Presupposes something false (a PhD thesis) -- checks the system doesn't play along with a false premise."
+    }
+  ]
+}

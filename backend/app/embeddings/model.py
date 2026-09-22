@@ -1,13 +1,10 @@
-import os
+from app.bootstrap import apply_local_first_env_fixes
 
-# OmniDoc is local-first: once the embedding model is cached, it
-# must never make a network call to HuggingFace Hub just to check
-# for updates. Besides being slow, it makes the app fail outright
-# on a broken proxy/SSL config (as happened here) or with no
-# internet at all, defeating the point of running locally. This
-# must be set before `sentence_transformers` is imported.
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+# Defense in depth for any entry point that imports this module
+# without going through app.main or eval/run_eval.py first (e.g. a
+# one-off script or notebook). Harmless if already applied --
+# os.environ.setdefault() no-ops on the second call.
+apply_local_first_env_fixes()
 
 from sentence_transformers import SentenceTransformer  # noqa: E402
 
