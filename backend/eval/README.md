@@ -51,18 +51,42 @@ quoting any generation number publicly (a README, a resume bullet,
 etc.) — the harness exists to catch regressions fast, not to replace
 that read.
 
-## Known result (baseline, one document)
+## Known result (baseline, one document, 2026-09-22)
 
-Running the seed set against a single indexed resume PDF surfaced a
-real, reproducible retrieval gap: the question *"What is this person's
-name?"* misses at every k up to 5, because dense embedding similarity
-ranks a semantically-generic "Summary" chunk above the short chunk
-whose heading literally is the name. This is exactly what you'd expect
-from dense-only retrieval on a short, low-context query — see the
-top-level README's roadmap (hybrid BM25 + dense retrieval) for the
-planned fix. This is a good example of why this harness is worth
-having: it turns "retrieval feels fine" into a specific, fixable,
-re-testable failure.
+**Retrieval:** Recall@1=75%, Recall@3/5=91.7%, MRR=0.83. One
+reproducible gap: *"What is this person's name?"* misses at every k
+up to 5, because dense embedding similarity ranks a semantically-generic
+"Summary" chunk above the short chunk whose heading literally is the
+name. Exactly what you'd expect from dense-only retrieval on a short,
+low-context query — see the top-level README's roadmap (hybrid
+BM25 + dense retrieval) for the planned fix.
+
+**Generation:** factual keyword-hit rate 100% (12/12), refusal rate on
+unanswerable questions 100% (3/3) — but reading `per_question` by hand
+(as this doc tells you to) surfaces real issues the headline numbers
+hide:
+- The database-technologies question's retrieved chunk lists
+  `MongoDB, MySQL`; the answer said *"SQL and MySQL"*, dropping MongoDB
+  and miscategorizing SQL as a database technology. Still scored a
+  "hit" because the metric only required 1 of 2 keywords.
+- The cloud/DevOps-tools answer is genuinely garbled ("lists Git/GitHub
+  as a tool & technology related to Git/GitHub, and Docker as a
+  framework & library related to Docker") — low-quality phrasing from
+  the 3B model, invisible to a keyword check.
+- The name question's answer is *correct* despite retrieval missing
+  the right chunk (above) — most likely because every context block in
+  the prompt includes `Document: Aditii_Resume.pdf`, and the model
+  pattern-matched the filename into a name rather than reading it from
+  retrieved content. That's a real, subtle grounding risk: it worked
+  here by coincidence (the filename happens to be the person's name)
+  and would silently fail on a document whose filename doesn't match
+  its content.
+
+This is exactly why this harness is worth having, and why its own
+README tells you not to trust the summary numbers blindly: "100%/100%"
+reads as a finished system; a five-minute manual read of the same
+report finds two real answer-quality bugs and one grounding risk that
+a keyword check can't see.
 
 ## Extending the dataset
 

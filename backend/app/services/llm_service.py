@@ -30,6 +30,35 @@ class LLMService:
         ]
 
     @classmethod
+    def unload(cls) -> bool:
+        """
+        Best-effort release of Ollama's resident model.
+
+        Ollama keeps a loaded model resident (system RAM + whatever
+        fits in VRAM) for a keep-alive window after the last call,
+        independent of this app's own process. On memory-constrained
+        hardware, that resident model competing with this process
+        loading the embedding model is enough to OOM either process.
+        Callers that are about to do heavy local memory work (e.g.
+        the eval harness loading BGE-M3) can call this first to free
+        that headroom; Ollama reloads transparently (with a one-time
+        reload delay) on the next real request.
+
+        Returns True if the request succeeded, False otherwise --
+        never raises, since this is a courtesy call, not something
+        that should fail the caller's real work.
+        """
+        try:
+            requests.post(
+                f"{settings.OLLAMA_BASE_URL}/api/generate",
+                json={"model": settings.LLM_MODEL_NAME, "keep_alive": 0},
+                timeout=30,
+            )
+            return True
+        except requests.RequestException:
+            return False
+
+    @classmethod
     def generate(
         cls,
         system: str,

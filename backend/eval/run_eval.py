@@ -32,6 +32,7 @@ apply_local_first_env_fixes()
 
 from app.prompts.prompt_builder import PromptBuilder  # noqa: E402
 from app.services.chat_service import ChatService  # noqa: E402
+from app.services.llm_service import LLMService  # noqa: E402
 from app.services.retrieval_service import RetrievalService  # noqa: E402
 from eval.metrics import (  # noqa: E402
     AggregateResults,
@@ -165,6 +166,13 @@ def main():
     print(f"Loaded {len(items)} questions "
           f"({factual_count} factual, {unanswerable_count} unanswerable)")
     print()
+
+    # Best-effort: free Ollama's resident model before loading the
+    # embedding model in THIS process. On memory-constrained
+    # hardware, both being resident at once is enough to OOM --
+    # Ollama reloads transparently (one-time delay) on the first
+    # real generation call below, if --with-generation is set.
+    LLMService.unload()
 
     retrieval_results = run_retrieval_eval(items, args.top_k)
 

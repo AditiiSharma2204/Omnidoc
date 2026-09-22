@@ -74,22 +74,31 @@ This section is deliberately blunt — see it as the project's honest changelog.
 - **No persistent chat history** — refreshing the page loses the conversation.
 - **No auth, no multi-user support.**
 - **Memory-constrained by design.** This targets modest hardware (built against
-  an NVIDIA MX450, 2GB VRAM). LLM inference runs on Ollama's own process, but
-  Docling's parsing models and the BGE-M3 embedding model both run in the
-  FastAPI process's CPU RAM. On a machine with limited free system RAM
-  (~3GB or less), parsing a document immediately before an embedding call
-  can OOM-crash the server — Docling's OCR and table-structure models are
-  disabled by default for this reason (`DOCLING_DO_OCR`, `DOCLING_DO_TABLE_STRUCTURE`
-  in settings). If you hit a crash on upload, free up RAM (close other heavy
-  apps) or reduce concurrent load; a proper fix (ingestion in an isolated
-  worker process) is on the roadmap.
-- **No evaluation harness yet** — retrieval/answer quality isn't measured,
-  only spot-checked. This is the next priority.
+  an NVIDIA MX450, 2GB VRAM). Ollama, Docling's parsing models and the BGE-M3
+  embedding model each keep a resident model in RAM, and on a machine with
+  limited free system RAM (~3GB or less) having more than one loaded at once
+  can OOM-crash a process. Mitigations in place: Docling's OCR and
+  table-structure models are disabled by default (`DOCLING_DO_OCR`,
+  `DOCLING_DO_TABLE_STRUCTURE` in settings), the embedding model loads with
+  `low_cpu_mem_usage`, and `LLMService.unload()` can release Ollama's resident
+  model on demand before heavy local work. If you still hit a crash, free up
+  RAM or reduce concurrent load; a proper fix (ingestion in an isolated worker
+  process) is on the roadmap.
+- **Evaluation harness exists but is small and single-document.** See
+  `backend/eval/` — a 15-question seed set with retrieval (Recall@k, MRR) and
+  generation (keyword-hit, refusal-rate) metrics. Baseline: Recall@5=91.7%,
+  generation keyword-hit=100%, but manual review of that same run found two
+  real answer-quality issues and one grounding risk that the automated
+  metrics missed (see `backend/eval/README.md`'s "Known result" section) —
+  a good illustration of why the harness explicitly warns against trusting
+  its summary numbers without reading `per_question`. Needs expanding to
+  50+ questions across varied document types before it's a real benchmark.
 
 ## Roadmap
 
-Short-term priorities, roughly in order: an evaluation harness with a
-retrieval/faithfulness benchmark, hybrid (BM25 + dense) retrieval with a
-cross-encoder reranker, inline citations with page-level source highlighting,
+Short-term priorities, roughly in order: expand the evaluation harness
+(more documents, more questions, LLM-as-judge for faithfulness), hybrid
+(BM25 + dense) retrieval with a cross-encoder reranker, inline citations
+with page-level source highlighting,
 streaming + markdown in the UI, and a Docker Compose setup that works from a
 clean clone.
