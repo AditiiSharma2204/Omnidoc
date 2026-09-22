@@ -17,3 +17,16 @@ class MetadataService:
                 f,
                 indent=4,
             )
+
+    @staticmethod
+    def load(document_folder: Path) -> DocumentMetadata | None:
+
+        metadata_path = document_folder / "metadata.json"
+
+        if not metadata_path.exists():
+            return None
+
+        with metadata_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        return DocumentMetadata(**data)

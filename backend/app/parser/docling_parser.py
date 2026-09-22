@@ -5,7 +5,14 @@ from app.schemas.parsed_document import ParsedDocument
 from app.services.docling_service import DoclingService
 
 
-class PDFParser(BaseParser):
+class DoclingParser(BaseParser):
+    """
+    Generic parser backed by Docling.
+
+    Docling's DocumentConverter natively handles PDF, DOCX, PPTX and
+    XLSX, so a single parser implementation covers all of them
+    instead of one class per file type.
+    """
 
     def __init__(self):
         self.docling = DoclingService()

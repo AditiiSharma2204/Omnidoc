@@ -8,6 +8,7 @@ ALLOWED_EXTENSIONS = {
     ".jpeg",
     ".docx",
     ".pptx",
+    ".xlsx",
 }
 
 # Maximum upload size (25 MB)
@@ -18,9 +19,13 @@ ALLOWED_MIME_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "image/png",
     "image/jpeg",
 }
+
+# Extensions Docling can convert directly (routed to DoclingParser)
+DOCLING_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx"}
 
 # Storage directories
 UPLOAD_DIR = Path("storage/uploads")

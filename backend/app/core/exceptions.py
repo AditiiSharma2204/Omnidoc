@@ -23,3 +23,11 @@ class EmptyFileException(HTTPException):
             status_code=400,
             detail="Uploaded file is empty."
         )
+
+
+class DocumentNotFoundException(HTTPException):
+    def __init__(self, document_id: str):
+        super().__init__(
+            status_code=404,
+            detail=f"Document '{document_id}' not found."
+        )

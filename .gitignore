@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+backend/.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# Build
+dist/
+build/
+
+# ---------------------------------------------------------
+# Runtime data (uploaded documents, parsed output, embeddings,
+# the FAISS index). None of this belongs in version control --
+# it's per-machine, regenerable from an upload, and in this repo's
+# history it previously leaked real uploaded PDFs into git.
+# ---------------------------------------------------------
+backend/storage/documents/*
+!backend/storage/documents/.gitkeep
+
+backend/storage/vectorstore/*
+!backend/storage/vectorstore/.gitkeep
+
+# Legacy/unused stub directory from an earlier layout (superseded by
+# backend/storage/vectorstore) -- not tracked at all.
+/vectorstore/
+
+# Ad hoc manual scripts used during early exploration (reference
+# absolute personal paths / removed modules; superseded by the real
+# API + a real test suite).
+/test_docling.py
+backend/test_*.py

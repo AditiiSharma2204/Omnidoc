@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from app.parser.pdf_parser import PDFParser
+from app.core.constants import DOCLING_EXTENSIONS
+from app.parser.docling_parser import DoclingParser
 
 
 class ParserFactory:
@@ -10,7 +11,7 @@ class ParserFactory:
 
         extension = Path(file_path).suffix.lower()
 
-        if extension == ".pdf":
-            return PDFParser()
+        if extension in DOCLING_EXTENSIONS:
+            return DoclingParser()
 
         raise ValueError(f"Unsupported file type: {extension}")
