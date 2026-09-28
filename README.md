@@ -91,23 +91,31 @@ all persist in named volumes across restarts.
 
 This section is deliberately blunt — see it as the project's honest changelog.
 
-- **Streaming is wired to the UI now, but not yet live-verified end-to-end.**
-  `/chat/stream` previously returned a bare token stream with no citations
-  and no conversation persistence — wiring the frontend to that as-is
-  would have regressed both features. Fixed instead: `ChatService.stream()`
-  now yields newline-delimited JSON events (`{"type": "token", ...}` then
-  a final `{"type": "done", "conversation_id", "sources"}`), builds the
-  same cited/uncited sources `chat()` does, and persists both turns to
-  SQLite the same way. The frontend (`streamQuestion` in `chatApi.ts`,
-  wired into `ChatWindow.tsx`) reads it via `fetch`'s streaming body
-  reader (axios has no browser-side streaming reader) and renders tokens
-  incrementally into the assistant bubble. All logic is unit tested
-  (16/16 in `test_chat_service.py`, mocked retrieval/LLM, no live model)
-  and the frontend build is clean, but a real click-through against a
-  live Ollama call hasn't been done yet — free system RAM was at 2.83GB
-  when this was built, under the ~3.2-3.4GB level that already caused two
-  reproducible reranker SIGSEGVs earlier today, so a live attempt was
-  deliberately skipped rather than risked.
+- **Streaming, live-verified against the real model -- and it found and
+  fixed a real bug.** `/chat/stream` previously returned a bare token
+  stream with no citations and no conversation persistence — wiring the
+  frontend to that as-is would have regressed both features. Fixed
+  instead: `ChatService.stream()` yields newline-delimited JSON events
+  (`{"type": "token", ...}` then a final `{"type": "done",
+  "conversation_id", "sources"}`), builds the same cited/uncited sources
+  `chat()` does, and persists both turns to SQLite the same way. The
+  frontend (`streamQuestion` in `chatApi.ts`, wired into
+  `ChatWindow.tsx`) reads it via `fetch`'s streaming body reader (axios
+  has no browser-side streaming reader) and renders tokens incrementally.
+  Live-tested end-to-end against a real running server and real Ollama
+  calls (`curl -N` against `/chat/stream`, 2 real questions): tokens
+  streamed correctly, citations matched exactly what the model cited,
+  both turns persisted and were retrievable via `GET
+  /conversations/{id}` afterward. The **first** live attempt hit the
+  documented Ollama/CUDA crash directly — a real chat request right
+  after BGE-M3+reranker loaded got a 500 from Ollama's own CUDA init
+  failing, and `LLMService.stream()` had no retry logic at all (unlike
+  `generate()`, which does). Fixed: `stream()` now retries connection
+  establishment with the same backoff as `generate()` (5 tests added in
+  `test_llm_service.py::TestStreamRetries`). Restarted the server with
+  the fix and the second attempt succeeded cleanly. 21/21 unit tests
+  passing (`test_chat_service.py` + `test_llm_service.py`), frontend
+  build clean, and now a genuine live pass too — not just mocked.
 - **Query rewriting, measured — and correctly kept off by default.**
   `QueryRewriteService` (HyDE-style: embeds an LLM-generated hypothetical
   answer instead of the raw question) is wired into retrieval and unit
@@ -261,7 +269,9 @@ This section is deliberately blunt — see it as the project's honest changelog.
   PyTorch process (this app's embedder/reranker) is concurrently resident
   — reproduced with plenty of free RAM and VRAM, so it isn't simply a
   memory problem; looks like a driver-level race. `LLMService.generate()`
-  retries with backoff (up to 5 attempts, `RETRY_BACKOFF_SECONDS=20`) and
+  AND `LLMService.stream()` (the latter fixed today -- it had no retry
+  logic at all until a live streaming test hit this exact crash) retry
+  with backoff (up to 5 attempts, `RETRY_BACKOFF_SECONDS=20`) and
   that alone was enough the first several times this was hit. It was
   **not** reliably enough on every occasion, though (a later attempt still
   failed after the full retry budget) — the more robust workaround found
@@ -300,18 +310,19 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 Short-term priorities, roughly in order: measure follow-up query
 condensation on real multi-turn questions now that it's implemented
-(see Known limitations); a live click-through verification of
-streaming now that it's wired to the UI (see Known limitations); grow
-the evaluation dataset past 50 questions (contracts/legal documents,
-adversarial content) and re-run the document-scoped eval on a larger,
-more crowded corpus to see if scoping starts to matter (it measured
-zero difference on the current 5-document corpus — see Known
-limitations); page-level citation highlighting (jump to the cited PDF
-page, not just show the source card); and a confirmed, end-to-end
-`docker compose up` run (compose file and Dockerfiles exist and
-validate; a live build hit this machine's known instability partway
-through — see Known limitations).
+(see Known limitations); grow the evaluation dataset past 50 questions
+(contracts/legal documents, adversarial content) and re-run the
+document-scoped eval on a larger, more crowded corpus to see if
+scoping starts to matter (it measured zero difference on the current
+5-document corpus — see Known limitations); page-level citation
+highlighting (jump to the cited PDF page, not just show the source
+card); and a confirmed, end-to-end `docker compose up` run (compose
+file and Dockerfiles exist and validate; a live build hit this
+machine's known instability partway through — see Known limitations).
 
 Done since the last pass: refusal threshold calibrated from real data
-(`RERANK_SCORE_THRESHOLD=-10.87`) and the document-scoped retrieval
-eval run live — see Known limitations for both results.
+(`RERANK_SCORE_THRESHOLD=-10.87`); the document-scoped retrieval eval
+run live; and streaming live-verified end-to-end, which surfaced and
+fixed a real bug (`LLMService.stream()` had no retry logic for the
+documented Ollama/CUDA crash, unlike `generate()`) — see Known
+limitations for all three results.

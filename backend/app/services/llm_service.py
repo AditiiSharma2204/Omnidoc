@@ -158,25 +158,58 @@ class LLMService:
     ):
         """
         Stream tokens from Ollama.
+
+        Retries establishing the connection with the same backoff as
+        generate() -- this hit the exact documented Ollama/CUDA crash
+        live (a real chat request right after BGE-M3+reranker loaded
+        got a 500 from Ollama's own CUDA init failing) with no retry
+        here, unlike generate(). Only the initial request is retried;
+        once a response passes raise_for_status(), token streaming
+        itself isn't retried (matches generate()'s all-or-nothing
+        semantics -- there's no partial-answer resume).
         """
 
-        response = requests.post(
-            f"{settings.OLLAMA_BASE_URL}/api/chat",
-            json={
-                "model": settings.LLM_MODEL_NAME,
-                "messages": cls._messages(system, user, history),
-                "options": cls._options(
-                    settings.LLM_TEMPERATURE
-                    if temperature is None
-                    else temperature
-                ),
-                "stream": True,
-            },
-            stream=True,
-            timeout=300,
-        )
+        payload = {
+            "model": settings.LLM_MODEL_NAME,
+            "messages": cls._messages(system, user, history),
+            "options": cls._options(
+                settings.LLM_TEMPERATURE
+                if temperature is None
+                else temperature
+            ),
+            "stream": True,
+        }
 
-        response.raise_for_status()
+        last_error = None
+        response = None
+
+        for attempt in range(cls.MAX_RETRIES):
+
+            try:
+                response = requests.post(
+                    f"{settings.OLLAMA_BASE_URL}/api/chat",
+                    json=payload,
+                    stream=True,
+                    timeout=300,
+                )
+                response.raise_for_status()
+                last_error = None
+                break
+
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response else None
+                if status is None or status < 500:
+                    raise
+                last_error = e
+
+            except requests.exceptions.ConnectionError as e:
+                last_error = e
+
+            if attempt < cls.MAX_RETRIES - 1:
+                time.sleep(cls.RETRY_BACKOFF_SECONDS * (attempt + 1))
+
+        if last_error is not None:
+            raise last_error
 
         for line in response.iter_lines():
 

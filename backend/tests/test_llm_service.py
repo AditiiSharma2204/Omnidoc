@@ -6,9 +6,10 @@ from app.services.llm_service import LLMService
 
 
 class _FakeResponse:
-    def __init__(self, status_code, json_data=None):
+    def __init__(self, status_code, json_data=None, lines=None):
         self.status_code = status_code
         self._json_data = json_data or {}
+        self._lines = lines or []
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -16,6 +17,9 @@ class _FakeResponse:
 
     def json(self):
         return self._json_data
+
+    def iter_lines(self):
+        return iter(self._lines)
 
 
 @pytest.fixture(autouse=True)
@@ -103,6 +107,97 @@ class TestGenerateRetries:
         result = LLMService.generate(system="sys", user="usr")
 
         assert result == "back up"
+        assert len(calls) == 2
+
+
+def _ndjson_line(token: str) -> bytes:
+    import json as _json
+
+    return _json.dumps({"message": {"content": token}}).encode()
+
+
+class TestStreamRetries:
+    """
+    LLMService.stream() previously had no retry logic at all, unlike
+    generate() -- this hit the documented Ollama/CUDA crash live (a
+    real chat request right after BGE-M3+reranker loaded got a 500
+    from Ollama's own CUDA init failing) with nothing to recover it.
+    Mirrors TestGenerateRetries: retries apply to establishing the
+    connection only, not to token iteration itself.
+    """
+
+    def test_succeeds_on_first_try(self, monkeypatch):
+        calls = []
+
+        def fake_post(url, json, stream, timeout):
+            calls.append(1)
+            return _FakeResponse(
+                200, lines=[_ndjson_line("hel"), _ndjson_line("lo")]
+            )
+
+        monkeypatch.setattr(requests, "post", fake_post)
+
+        tokens = list(LLMService.stream(system="sys", user="usr"))
+
+        assert tokens == ["hel", "lo"]
+        assert len(calls) == 1
+
+    def test_retries_on_500_then_succeeds(self, monkeypatch):
+        responses = [
+            _FakeResponse(500),
+            _FakeResponse(500),
+            _FakeResponse(200, lines=[_ndjson_line("ok now")]),
+        ]
+        calls = []
+
+        def fake_post(url, json, stream, timeout):
+            calls.append(1)
+            return responses[len(calls) - 1]
+
+        monkeypatch.setattr(requests, "post", fake_post)
+
+        tokens = list(LLMService.stream(system="sys", user="usr"))
+
+        assert tokens == ["ok now"]
+        assert len(calls) == 3
+
+    def test_raises_after_exhausting_retries(self, monkeypatch):
+        def fake_post(url, json, stream, timeout):
+            return _FakeResponse(500)
+
+        monkeypatch.setattr(requests, "post", fake_post)
+
+        with pytest.raises(requests.exceptions.HTTPError):
+            list(LLMService.stream(system="sys", user="usr"))
+
+    def test_does_not_retry_on_4xx(self, monkeypatch):
+        calls = []
+
+        def fake_post(url, json, stream, timeout):
+            calls.append(1)
+            return _FakeResponse(400)
+
+        monkeypatch.setattr(requests, "post", fake_post)
+
+        with pytest.raises(requests.exceptions.HTTPError):
+            list(LLMService.stream(system="sys", user="usr"))
+
+        assert len(calls) == 1
+
+    def test_retries_on_connection_error(self, monkeypatch):
+        calls = []
+
+        def fake_post(url, json, stream, timeout):
+            calls.append(1)
+            if len(calls) < 2:
+                raise requests.exceptions.ConnectionError("refused")
+            return _FakeResponse(200, lines=[_ndjson_line("back up")])
+
+        monkeypatch.setattr(requests, "post", fake_post)
+
+        tokens = list(LLMService.stream(system="sys", user="usr"))
+
+        assert tokens == ["back up"]
         assert len(calls) == 2
 
 
