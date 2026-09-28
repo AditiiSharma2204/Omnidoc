@@ -218,10 +218,10 @@ export default function ChatWindow() {
                             {documents.map((doc) => (
 
                                 <span
-                                    key={doc}
+                                    key={doc.document_id}
                                     className="px-3 py-1 rounded-full bg-gray-100 border text-sm"
                                 >
-                                    📄 {doc}
+                                    📄 {doc.original_filename}
                                 </span>
 
                             ))}

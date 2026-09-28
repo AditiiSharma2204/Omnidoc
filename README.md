@@ -91,6 +91,27 @@ all persist in named volumes across restarts.
 
 This section is deliberately blunt — see it as the project's honest changelog.
 
+- **Document sidebar previously drifted from what was actually indexed
+  -- found via real browser use, not a code review.** `DocumentContext`
+  was pure in-memory React state that started empty and only grew via
+  `addDocument()` calls made right after an upload in that same browser
+  tab -- it never fetched the real list from the backend. So a document
+  uploaded in an earlier session (or by a script) was fully indexed and
+  fully searchable, but invisible in the sidebar; a fresh page load also
+  showed nothing until a new upload happened. Worse, chat has no
+  document-scoping UI at all (`document_ids` is never sent), so a chat
+  question always searches the ENTIRE indexed corpus regardless of what
+  the sidebar shows -- caught in practice when a single freshly-uploaded
+  document produced an answer citing four unrelated older documents
+  the sidebar wasn't even displaying. Fixed: `DocumentContext` now
+  fetches `GET /documents` on mount and after every upload, so the
+  sidebar reflects the backend's real state; also added a working
+  delete button (the backend's `DELETE /documents/{id}` existed, but
+  the frontend never called it -- `removeDocument` was dead code).
+  Chat still has no per-conversation document scoping -- deleting
+  documents you don't want in scope is the only current way to narrow
+  what a question can retrieve from; scoping chat to specific selected
+  documents remains a real gap, not yet on the roadmap above.
 - **Streaming, live-verified against the real model -- and it found and
   fixed a real bug.** `/chat/stream` previously returned a bare token
   stream with no citations and no conversation persistence — wiring the
@@ -308,7 +329,11 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 ## Roadmap
 
-Short-term priorities, roughly in order: measure follow-up query
+Short-term priorities, roughly in order: chat-level document scoping
+in the UI (a checkbox per sidebar document to include/exclude from
+retrieval, wired to the `document_ids` param `RetrievalService.search`
+already supports server-side — found missing via real browser use, see
+Known limitations); measure follow-up query
 condensation on real multi-turn questions now that it's implemented
 (see Known limitations); grow the evaluation dataset past 50 questions
 (contracts/legal documents, adversarial content) and re-run the

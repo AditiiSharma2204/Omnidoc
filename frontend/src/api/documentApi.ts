@@ -1,4 +1,5 @@
 import api from "./api";
+import type { DocumentListResponse } from "../types/document";
 
 export async function uploadDocument(file: File) {
 
@@ -17,4 +18,17 @@ export async function uploadDocument(file: File) {
     );
 
     return response.data;
+}
+
+export async function listDocuments(): Promise<DocumentListResponse> {
+
+    const response = await api.get("/documents");
+
+    return response.data;
+}
+
+export async function deleteDocument(documentId: string): Promise<void> {
+
+    await api.delete(`/documents/${documentId}`);
+
 }
