@@ -36,6 +36,15 @@ python -m eval.run_eval --compare-modes --with-query-rewrite
 # reproducibly SIGSEGV'd on this machine, not a code issue; the
 # calibration math itself is unit tested in tests/test_run_eval.py)
 python -m eval.run_eval --calibrate-threshold
+
+# Document-scoped vs unscoped retrieval, per question tagged with
+# source_document in dataset.json -- checks whether scoping to just
+# the right document (via document_ids) recovers recall the q12
+# corpus-crowding finding below lost. Retrieval-only, no Ollama --
+# see the top-level README's Known limitations for current status
+# (unit tested in tests/test_run_eval.py; no live run yet, same
+# memory-instability blocker as --calibrate-threshold)
+python -m eval.run_eval --document-scoped
 ```
 
 ## What it measures
@@ -154,11 +163,12 @@ only 3 are real:
   one: this exact question scored a hit on the 1-document baseline.
   With 4 more documents now competing for the top-5 slots, the correct
   resume chunk got crowded out, and the model correctly refused rather
-  than guessing. This eval doesn't scope questions to their source
-  document via `document_ids` (built on Day 1, never exercised here) —
-  doing so would very likely fix this specific case and is a natural
-  next harness improvement: measure global retrieval *and*
-  document-scoped retrieval side by side.
+  than guessing. A `--document-scoped` harness mode now exists to test
+  exactly this hypothesis (scope `q12` to `document_ids=[<resume's id>]`
+  and see if the hit comes back) — see "Running it" above. Its logic is
+  unit tested, but no live run has been done yet (same memory-
+  instability blocker as `--calibrate-threshold`), so whether scoping
+  actually recovers `q12` is still unconfirmed, not assumed.
 
 ## Query rewriting (HyDE) — measured, correctly kept off by default
 

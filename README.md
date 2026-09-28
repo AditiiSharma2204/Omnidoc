@@ -160,6 +160,19 @@ This section is deliberately blunt — see it as the project's honest changelog.
   actually be run -- shipping a guessed threshold risks silently
   refusing correct answers, which is worse than not having the feature
   at all.
+- **Document-scoped retrieval eval is implemented but not yet run
+  live.** The corpus-crowding finding below (`q12`) motivated a
+  `--document-scoped` harness mode (`eval/run_eval.py::run_document_scoped_eval`)
+  that re-runs each `source_document`-tagged question's retrieval
+  scoped to just that document (via the `document_ids` parameter,
+  built on Day 1 but never exercised by the eval until now) and
+  compares it against the normal unscoped run. All 31 factual
+  questions in `dataset.json` are now tagged with `source_document`
+  (12 were untagged before this). Unit tested (4 tests,
+  `TestRunDocumentScopedEval` in `tests/test_run_eval.py`), but not
+  run live yet -- same memory-instability blocker as threshold
+  calibration above, so whether scoping actually recovers `q12` is
+  unconfirmed, not assumed.
 - **Inline citations, live-verified against the real model.** The first
   live test (after a machine restart resolved the earlier instability)
   showed the mechanism working but the model citing nothing at all —
@@ -284,9 +297,10 @@ condensation on real multi-turn questions now that it's implemented
 (see Known limitations); calibrate the
 refusal threshold against real reranker scores; a live click-through
 verification of streaming now that it's wired to the UI (see Known
-limitations); a document-scoped retrieval eval
-alongside the current global one (the corpus-crowding finding in
-`backend/eval/README.md`); grow the evaluation dataset past 50
+limitations); a live run of the document-scoped retrieval eval
+(`--document-scoped`, implemented and unit tested, not yet run live —
+see Known limitations) to confirm it recovers the corpus-crowding
+finding in `backend/eval/README.md`; grow the evaluation dataset past 50
 questions (contracts/legal documents, adversarial content); page-level
 citation highlighting (jump to the cited PDF page, not just show the
 source card); and a confirmed, end-to-end `docker compose up` run
