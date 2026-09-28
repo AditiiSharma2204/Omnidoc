@@ -1,0 +1,60 @@
+# One-command setup: `docker compose up --build`, then pull the LLM
+# once with `docker compose exec ollama ollama pull qwen2.5:3b` (not
+# baked into the image -- keeps the image small and the model choice
+# a runtime decision, not a rebuild).
+#
+# GPU passthrough is NOT enabled by default. This project targets
+# modest hardware (a 2GB-VRAM laptop GPU) and Docker GPU passthrough
+# needs host-specific setup (NVIDIA Container Toolkit on Linux, or
+# WSL2 GPU support on Windows) that can't be assumed to exist -- CPU
+# inference always works as the baseline. See the commented-out
+# `deploy.resources` block on the ollama service to enable it.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment if the host has NVIDIA Container Toolkit configured:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      EMBEDDING_CACHE_DIR: /root/.cache/huggingface
+      DOCUMENTS_DIR: storage/documents
+      VECTORSTORE_DIR: storage/vectorstore
+      DATABASE_PATH: storage/app.db
+    volumes:
+      - backend_storage:/app/storage
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      - ollama
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Reachable from the browser (outside the Docker network) via
+        # the backend's host-published port above.
+        VITE_API_BASE_URL: http://127.0.0.1:8000/api/v1
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  ollama_data:
+  backend_storage:
+  hf_cache:

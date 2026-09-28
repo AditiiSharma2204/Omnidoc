@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+storage/documents/*
+storage/vectorstore/*
+storage/app.db
+!storage/documents/.gitkeep
+!storage/vectorstore/.gitkeep
+eval/results/
+_*.log
+_*.txt
+test_*.py
+.env

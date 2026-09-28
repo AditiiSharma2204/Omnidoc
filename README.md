@@ -71,12 +71,27 @@ npm install
 npm run dev
 ```
 
+### Docker (one command, no local Python/Node/Ollama install needed)
+
+```bash
+docker compose up --build
+# once it's up, pull the model into the ollama container (one-time):
+docker compose exec ollama ollama pull qwen2.5:3b
+```
+
+Frontend on `http://localhost:5173`, backend on `http://localhost:8000`.
+Runs CPU-only by default — GPU passthrough needs host-specific setup
+(NVIDIA Container Toolkit / WSL2 GPU support) that can't be assumed to
+exist; see the commented-out block in `docker-compose.yml` to enable
+it if you have that configured. Storage (documents, vector index,
+SQLite metadata), the HuggingFace model cache and Ollama's own models
+all persist in named volumes across restarts.
+
 ## Known limitations
 
 This section is deliberately blunt — see it as the project's honest changelog.
 
 - **No streaming in the UI yet.** The `/chat/stream` endpoint exists; the frontend isn't wired to it.
-- **No markdown rendering in the chat UI.**
 - **Query rewriting, measured — and correctly kept off by default.**
   `QueryRewriteService` (HyDE-style: embeds an LLM-generated hypothetical
   answer instead of the raw question) is wired into retrieval and unit
@@ -147,6 +162,20 @@ This section is deliberately blunt — see it as the project's honest changelog.
   refreshing the page starts a new conversation client-side even though
   the old one is still in the database.
 - **No auth, no multi-user support.**
+- **Docker Compose setup exists, syntax-validated, build-verified on this
+  machine only partially.** `docker compose config` resolves cleanly
+  (services, volumes, port mappings, build contexts all correct). A live
+  `docker compose build backend` was attempted on the dev machine and hit
+  the same class of instability documented above (Ollama/CUDA driver
+  crashes, Docling/transformers native errors under sustained heavy
+  workloads): Docker Desktop's own engine went unreachable partway through
+  the (~13 minute) pip install of the ML dependency stack, independent of
+  anything in the Dockerfile itself. Not yet re-verified end to end
+  (`docker compose up` smoke test) on this machine; the Dockerfiles,
+  compose file and nginx config are still real, reviewable artifacts and
+  the compose config validates, but treat "builds cleanly from a clean
+  clone" as unconfirmed until re-tested on a stabler machine or after a
+  successful retry here.
 - **Memory-constrained by design.** This targets modest hardware (built against
   an NVIDIA MX450, 2GB VRAM). Ollama, Docling's parsing models, the BGE-M3
   embedding model and the cross-encoder reranker each keep a resident model
@@ -209,10 +238,13 @@ follow-ups (condense "what about the second one?" into a standalone
 retrieval query, distinct from the HyDE feature — see the conversation-
 memory limitation above); persist `conversation_id` client-side so a
 page reload doesn't lose the active conversation; calibrate the
-refusal threshold against real reranker scores; streaming + markdown
-rendering in the UI; a document-scoped retrieval eval alongside the
-current global one (the corpus-crowding finding in
+refusal threshold against real reranker scores; streaming in the UI
+(markdown rendering is already done); a document-scoped retrieval eval
+alongside the current global one (the corpus-crowding finding in
 `backend/eval/README.md`); grow the evaluation dataset past 50
 questions (contracts/legal documents, adversarial content); page-level
 citation highlighting (jump to the cited PDF page, not just show the
-source card); and a Docker Compose setup that works from a clean clone.
+source card); and a confirmed, end-to-end `docker compose up` run
+(compose file and Dockerfiles exist and validate; a live build hit
+this machine's known instability partway through — see Known
+limitations).
