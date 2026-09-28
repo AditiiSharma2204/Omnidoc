@@ -139,33 +139,46 @@ This section is deliberately blunt — see it as the project's honest changelog.
   mocked LLM). No live measurement yet of whether it actually improves
   retrieval on real follow-up questions — same live-eval blocker as the
   other unmeasured items on this list.
-- **Refusal threshold is implemented but uncalibrated, and document-
-  scoped retrieval eval is implemented but unverified -- both blocked
-  by a reproducible native crash loading the reranker, not a memory-
-  headroom issue as first suspected.**
-  `RetrievalService._apply_score_threshold` (mechanism unit tested:
-  `tests/test_reranker_service.py::TestScoreThreshold`) and the
-  `--document-scoped` harness mode
-  (`eval/run_eval.py::run_document_scoped_eval`, which scopes each
-  `source_document`-tagged question's retrieval to just that document
-  via `document_ids` and compares it against the unscoped run -- all 31
-  factual questions in `dataset.json` are now tagged) both need a real
-  cross-encoder reranker load to produce real numbers. Both are unit
-  tested against fixed inputs (`tests/test_run_eval.py`, 8 tests, all
-  passing) but a *live* run has SIGSEGV'd three times in a row,
-  reproducibly, at the exact same point (right as the reranker's
-  weights finish loading) -- first twice at ~3.2-3.4GB free RAM, then
-  again on a fresh attempt at 3.88GB free, which was expected to be
-  safely above that. That rules out "just below some memory threshold"
-  as the explanation; the actual cause is still unknown (plausibly a
-  native library/driver issue specific to this reranker model on this
-  machine's Windows/CUDA setup) and would need real debugging (e.g. a
-  minimal repro outside pytest/this harness, or trying a different
-  reranker checkpoint) rather than another retry. `RERANK_SCORE_THRESHOLD`
-  stays `None` (disabled) and the document-scoped hypothesis stays
-  unconfirmed until that's actually done -- shipping a guessed
-  threshold risks silently refusing correct answers, which is worse
-  than not having the feature at all.
+- **Refusal threshold, now calibrated from real data.** A live
+  `--calibrate-threshold` run had SIGSEGV'd twice earlier in this same
+  session (reproducibly, right as the reranker's weights finished
+  loading), which first looked like a memory-headroom issue (~3.2-3.4GB
+  free both times) -- but debugging it properly (a minimal repro
+  outside pytest, isolating each step: reranker alone, then BGE-M3 +
+  reranker together, then the real `RetrievalService.search()` call, then
+  the exact `run_document_scoped_eval`/`run_threshold_calibration`
+  functions directly, all succeeded standalone) narrowed it down to
+  something specific to the `python -m eval.run_eval` invocation itself
+  -- and a plain retry of that *exact* command, no code changes, then
+  succeeded cleanly. So this is a real, intermittent, machine-level
+  flake (consistent with the WDDM/CUDA driver races already documented
+  elsewhere in this file), not a deterministic crash needing a code fix
+  -- correcting an earlier, more alarmed version of this note. With that
+  resolved: sampled real reranker scores across 31 factual questions (62
+  relevant / 93 irrelevant chunks, via the keyword-substring proxy).
+  `RERANK_SCORE_THRESHOLD` is now **-10.87** -- the lowest score any
+  relevant chunk received in the sample, so it only filters clearly
+  off-topic noise (6/93 irrelevant chunks at that cutoff) and drops zero
+  relevant chunks measured so far. Mechanism unit tested
+  (`tests/test_reranker_service.py::TestScoreThreshold`), calibration
+  logic unit tested (`tests/test_run_eval.py`, 8 tests), and now backed
+  by a real live run (`backend/eval/results/threshold_calibration_20260928_133646.json`).
+- **Document-scoped retrieval eval: real result is a measured negative
+  -- scoping made no difference.** The `--document-scoped` harness mode
+  (`eval/run_eval.py::run_document_scoped_eval`) re-ran all 31
+  `source_document`-tagged questions' retrieval both scoped (via
+  `document_ids`) and unscoped, hybrid+rerank both ways. Result:
+  **96.77% recall either way, zero questions recovered or regressed by
+  scoping** -- including `q12` (the original corpus-crowding miss that
+  motivated this harness mode), which now hits correctly unscoped too.
+  With `RERANK_CANDIDATE_MULTIPLIER=8` (the fix from the earlier
+  ablation) already in place, the current hybrid+rerank pipeline turns
+  out to be robust enough on this 5-document/36-question corpus that
+  document-scoping adds nothing measurable -- a real, honest negative
+  result, not a failed feature. Full data in
+  `backend/eval/results/document_scoped_20260928_133437.json`. Whether
+  this holds on a larger/more crowded corpus is untested -- the corpus
+  hasn't grown past 5 documents.
 - **Inline citations, live-verified against the real model.** The first
   live test (after a machine restart resolved the earlier instability)
   showed the mechanism working but the model citing nothing at all —
@@ -287,16 +300,18 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 Short-term priorities, roughly in order: measure follow-up query
 condensation on real multi-turn questions now that it's implemented
-(see Known limitations); calibrate the
-refusal threshold against real reranker scores; a live click-through
-verification of streaming now that it's wired to the UI (see Known
-limitations); a live run of the document-scoped retrieval eval
-(`--document-scoped`, implemented and unit tested, not yet run live —
-see Known limitations) to confirm it recovers the corpus-crowding
-finding in `backend/eval/README.md`; grow the evaluation dataset past 50
-questions (contracts/legal documents, adversarial content); page-level
-citation highlighting (jump to the cited PDF page, not just show the
-source card); and a confirmed, end-to-end `docker compose up` run
-(compose file and Dockerfiles exist and validate; a live build hit
-this machine's known instability partway through — see Known
-limitations).
+(see Known limitations); a live click-through verification of
+streaming now that it's wired to the UI (see Known limitations); grow
+the evaluation dataset past 50 questions (contracts/legal documents,
+adversarial content) and re-run the document-scoped eval on a larger,
+more crowded corpus to see if scoping starts to matter (it measured
+zero difference on the current 5-document corpus — see Known
+limitations); page-level citation highlighting (jump to the cited PDF
+page, not just show the source card); and a confirmed, end-to-end
+`docker compose up` run (compose file and Dockerfiles exist and
+validate; a live build hit this machine's known instability partway
+through — see Known limitations).
+
+Done since the last pass: refusal threshold calibrated from real data
+(`RERANK_SCORE_THRESHOLD=-10.87`) and the document-scoped retrieval
+eval run live — see Known limitations for both results.

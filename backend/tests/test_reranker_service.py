@@ -208,8 +208,17 @@ class TestScoreThreshold:
     mechanism. Pure logic, no model involved.
     """
 
-    def test_disabled_by_default_returns_everything_unchanged(self):
+    def test_none_threshold_returns_everything_unchanged(self, monkeypatch):
+        """
+        RERANK_SCORE_THRESHOLD is no longer None by default (calibrated
+        from real data on 2026-09-28, see settings.py's comment) -- this
+        covers the disabled state explicitly rather than relying on it
+        being the default.
+        """
+        from app.config.settings import settings
         from app.services.retrieval_service import RetrievalService
+
+        monkeypatch.setattr(settings, "RERANK_SCORE_THRESHOLD", None)
 
         results = [_chunk_scored("c1", -10.0), _chunk_scored("c2", -50.0)]
 

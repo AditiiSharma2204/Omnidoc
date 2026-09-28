@@ -31,19 +31,21 @@ python -m eval.run_eval --compare-modes --with-query-rewrite
 
 # Sample real reranker scores (relevant vs. irrelevant chunk) to pick
 # RERANK_SCORE_THRESHOLD from data instead of a guess. Retrieval-only,
-# no Ollama needed -- see the top-level README's "Refusal threshold"
-# entry under Known limitations for current status (a live run has
-# reproducibly SIGSEGV'd on this machine, not a code issue; the
-# calibration math itself is unit tested in tests/test_run_eval.py)
+# no Ollama needed. Already run live -- RERANK_SCORE_THRESHOLD=-10.87
+# in settings.py is the measured result, see the top-level README's
+# "Refusal threshold" entry under Known limitations and
+# eval/results/threshold_calibration_20260928_133646.json for the raw
+# data (62 relevant / 93 irrelevant chunks sampled across 31 questions)
 python -m eval.run_eval --calibrate-threshold
 
 # Document-scoped vs unscoped retrieval, per question tagged with
 # source_document in dataset.json -- checks whether scoping to just
 # the right document (via document_ids) recovers recall the q12
-# corpus-crowding finding below lost. Retrieval-only, no Ollama --
-# see the top-level README's Known limitations for current status
-# (unit tested in tests/test_run_eval.py; live run blocked by the
-# same reranker-load crash as --calibrate-threshold)
+# corpus-crowding finding below lost. Retrieval-only, no Ollama.
+# Already run live -- result was a measured negative (96.77% recall
+# either way, zero questions recovered or regressed by scoping,
+# including q12) -- see the top-level README's Known limitations and
+# eval/results/document_scoped_20260928_133437.json for the raw data
 python -m eval.run_eval --document-scoped
 ```
 
@@ -163,12 +165,20 @@ only 3 are real:
   one: this exact question scored a hit on the 1-document baseline.
   With 4 more documents now competing for the top-5 slots, the correct
   resume chunk got crowded out, and the model correctly refused rather
-  than guessing. A `--document-scoped` harness mode now exists to test
-  exactly this hypothesis (scope `q12` to `document_ids=[<resume's id>]`
-  and see if the hit comes back) — see "Running it" above. Its logic is
-  unit tested, but no live run has been done yet (same memory-
-  instability blocker as `--calibrate-threshold`), so whether scoping
-  actually recovers `q12` is still unconfirmed, not assumed.
+  than guessing (that was under generation eval, on 2026-09-22). A
+  `--document-scoped` harness mode was later built to test exactly this
+  hypothesis and run live on 2026-09-28: at **retrieval level**, `q12`
+  now hits correctly both scoped AND unscoped, and in fact **every** one
+  of the 31 `source_document`-tagged questions showed identical
+  scoped/unscoped recall (96.77% either way, zero recoveries, zero
+  regressions) — see the top-level README's "Document-scoped retrieval
+  eval" entry and `eval/results/document_scoped_20260928_133437.json`.
+  So the corpus-crowding effect that caused the original `q12` miss
+  doesn't reproduce at the *retrieval* layer any more on this corpus
+  (likely because `RERANK_CANDIDATE_MULTIPLIER=8`, added right after
+  that finding, already fixed it) — document scoping isn't needed here,
+  which is itself a useful negative result. Whether crowding reappears
+  on a bigger/more crowded corpus than 5 documents is untested.
 
 ## Query rewriting (HyDE) — measured, correctly kept off by default
 
@@ -326,6 +336,8 @@ from one person — no contracts, legal documents, or genuinely
 adversarial content (e.g. a document deliberately containing text that
 looks like a prompt injection). Also worth doing next: list keyword
 *alternatives* for acronym/full-name pairs (the `q22` false-miss
-lesson above), and add a document-scoped retrieval eval alongside the
-current global one (the `q12` finding above) using the `document_ids`
-filter `RetrievalService.search` already supports.
+lesson above), and re-run `--document-scoped` once the corpus is
+bigger/more crowded than 5 documents -- it measured zero difference
+from unscoped retrieval on the current corpus (the `q12` finding
+above), so a real test of whether scoping matters needs more crowding
+pressure than this corpus currently has.

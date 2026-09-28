@@ -60,12 +60,19 @@ class Settings(BaseSettings):
     # the resulting refusal). Scoped specifically to reranker scores
     # (cross-encoder logits) -- NOT applied to dense/BM25/hybrid
     # scores, whose scales are different and not calibrated here.
-    # None (the default) disables filtering entirely: this needs
-    # real calibration (sampling reranker scores across known
-    # relevant vs. irrelevant chunks) before it's safe to set a
-    # nonzero default -- see backend/eval/README.md. Shipping an
-    # uncalibrated guess risks silently refusing correct answers.
-    RERANK_SCORE_THRESHOLD: float | None = None
+    #
+    # Calibrated from real data on 2026-09-28
+    # (`python -m eval.run_eval --calibrate-threshold`, see
+    # backend/eval/README.md): -10.87 is the lowest score any
+    # relevant chunk scored across 31 factual questions (62 relevant/
+    # 93 irrelevant chunks sampled) -- the highest cutoff that drops
+    # zero relevant chunks in that sample, so it only filters clearly
+    # off-topic noise (6/93 irrelevant chunks at this cutoff), never a
+    # real answer. Deliberately conservative: a missed refusal
+    # (letting a weak chunk through) is recoverable by the LLM
+    # declining to answer from it, but wrongly refusing a real answer
+    # isn't.
+    RERANK_SCORE_THRESHOLD: float | None = -10.87
 
     # Query rewriting (HyDE-style): generates a short hypothetical
     # answer passage with the LLM and embeds THAT for dense retrieval
