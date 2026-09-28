@@ -1,9 +1,11 @@
 import json
 
+from app.config.settings import settings
 from app.prompts.prompt_builder import PromptBuilder
 from app.services.citation_service import CitationService
 from app.services.conversation_service import ConversationService
 from app.services.llm_service import LLMService
+from app.services.query_condenser_service import QueryCondenserService
 from app.services.retrieval_service import RetrievalService
 
 
@@ -23,12 +25,12 @@ class ChatService:
         """
         Normal (non-streaming) chat.
 
-        Retrieval runs on the raw `question` only, with or without a
-        conversation -- condensing a follow-up like "what about her
-        second job?" into a standalone retrieval query is a separate,
-        not-yet-built piece (query rewriting for follow-ups, distinct
+        Retrieval runs on `question` as-is unless FOLLOWUP_REWRITE_ENABLED
+        is on, in which case a follow-up like "what about her second
+        job?" is condensed into a standalone retrieval query using
+        conversation history first -- see QueryCondenserService (distinct
         from the HyDE query_rewrite feature already on RetrievalService).
-        Conversation memory here only makes *generation* aware of
+        Conversation memory otherwise only makes *generation* aware of
         prior turns: history is fetched before this question is
         answered and included as real chat turns, so the model can
         naturally reference what it already said.
@@ -42,7 +44,7 @@ class ChatService:
         )
 
         retrieved_chunks = RetrievalService.search(
-            query=question,
+            query=cls._retrieval_query(question, history),
             top_k=top_k,
             document_ids=document_ids,
         )
@@ -73,6 +75,12 @@ class ChatService:
             "sources": sources,
             "conversation_id": conversation_id,
         }
+
+    @staticmethod
+    def _retrieval_query(question: str, history: list[dict]) -> str:
+        if not settings.FOLLOWUP_REWRITE_ENABLED:
+            return question
+        return QueryCondenserService.condense(question, history)
 
     @staticmethod
     def _build_sources(answer: str, contexts: list) -> list[dict]:
@@ -128,7 +136,7 @@ class ChatService:
         )
 
         retrieved_chunks = RetrievalService.search(
-            query=question,
+            query=cls._retrieval_query(question, history),
             top_k=top_k,
             document_ids=document_ids,
         )

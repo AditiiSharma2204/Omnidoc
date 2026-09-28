@@ -81,6 +81,17 @@ class Settings(BaseSettings):
     # measured before/after before turning this on.
     QUERY_REWRITE_ENABLED: bool = False
 
+    # Follow-up query condensation: rewrites a follow-up like "what
+    # about her second job?" into a standalone retrieval query using
+    # conversation history, before RetrievalService.search() (which
+    # only ever sees the raw current question) runs. Distinct from
+    # QUERY_REWRITE_ENABLED's HyDE rewrite -- see
+    # QueryCondenserService's docstring. Off by default for the same
+    # reason: adds a real LLM call to every follow-up turn, and the
+    # quality effect hasn't been measured yet (blocked on the same
+    # live-eval machine instability documented in backend/eval/README.md).
+    FOLLOWUP_REWRITE_ENABLED: bool = False
+
     # Chunking (character-based; ~4 chars/token heuristic)
     CHUNK_MAX_CHARS: int = 1600
     CHUNK_OVERLAP_CHARS: int = 200

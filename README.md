@@ -124,6 +124,21 @@ This section is deliberately blunt — see it as the project's honest changelog.
   now because the data says so, not because it was never measured. See
   `backend/eval/README.md`'s "Query rewriting" section for the full
   numbers.
+- **Follow-up query condensation is implemented but unmeasured, off by
+  default.** `QueryCondenserService` rewrites a follow-up like "what
+  about her second job?" into a standalone retrieval query ("what was
+  Aditii Sharma's second job?") using conversation history, run before
+  `RetrievalService.search()` -- which otherwise only ever sees the raw
+  current question and has no access to prior turns. Distinct from
+  `QueryRewriteService`'s HyDE rewrite (that fabricates a hypothetical
+  *answer* passage to embed; this rewrites the *question* itself using
+  real history). Gated by `FOLLOWUP_REWRITE_ENABLED` (default `False`),
+  wired into both `chat()` and `stream()`, and unit tested (22/22 across
+  `test_query_condenser_service.py` and the new
+  `TestFollowUpQueryCondensation` class in `test_chat_service.py`,
+  mocked LLM). No live measurement yet of whether it actually improves
+  retrieval on real follow-up questions — same live-eval blocker as the
+  other unmeasured items on this list.
 - **Refusal threshold is implemented but uncalibrated -- live
   calibration attempted, blocked by this machine's memory instability.**
   `RetrievalService._apply_score_threshold` can drop reranked chunks below
@@ -264,10 +279,9 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 ## Roadmap
 
-Short-term priorities, roughly in order: query rewriting for
-follow-ups (condense "what about the second one?" into a standalone
-retrieval query, distinct from the HyDE feature — see the conversation-
-memory limitation above); calibrate the
+Short-term priorities, roughly in order: measure follow-up query
+condensation on real multi-turn questions now that it's implemented
+(see Known limitations); calibrate the
 refusal threshold against real reranker scores; a live click-through
 verification of streaming now that it's wired to the UI (see Known
 limitations); a document-scoped retrieval eval

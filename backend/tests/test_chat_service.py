@@ -303,3 +303,76 @@ class TestChatStream:
         )
 
         assert second_events[-1]["conversation_id"] == first_id
+
+
+class TestFollowUpQueryCondensation:
+    """
+    FOLLOWUP_REWRITE_ENABLED gates whether a follow-up question is
+    condensed (using conversation history) into a standalone retrieval
+    query before RetrievalService.search() runs. Off by default, so
+    this covers both states explicitly.
+    """
+
+    def _wire(self, monkeypatch, captured_queries, answer="answer"):
+        import app.services.chat_service as cs
+
+        def fake_search(query, **kwargs):
+            captured_queries.append(query)
+            return []
+
+        monkeypatch.setattr(cs.RetrievalService, "search", fake_search)
+        monkeypatch.setattr(
+            cs.LLMService, "generate", lambda system, user, history=None: answer
+        )
+
+    def test_disabled_by_default_uses_raw_question(self, monkeypatch):
+        captured = []
+        self._wire(monkeypatch, captured)
+
+        first = ChatService.chat("What is this person's name?")
+        ChatService.chat(
+            "what about her second job?",
+            conversation_id=first["conversation_id"],
+        )
+
+        assert captured[1] == "what about her second job?"
+
+    def test_enabled_condenses_follow_up_using_history(
+        self, monkeypatch
+    ):
+        import app.services.chat_service as cs
+        from app.config.settings import settings
+
+        captured = []
+        self._wire(monkeypatch, captured)
+        monkeypatch.setattr(
+            cs.QueryCondenserService,
+            "condense",
+            lambda question, history: "condensed standalone query",
+        )
+        monkeypatch.setattr(settings, "FOLLOWUP_REWRITE_ENABLED", True)
+
+        first = ChatService.chat("What is this person's name?")
+        ChatService.chat(
+            "what about her second job?",
+            conversation_id=first["conversation_id"],
+        )
+
+        assert captured[1] == "condensed standalone query"
+
+    def test_enabled_but_no_history_skips_condensation(self, monkeypatch):
+        """
+        QueryCondenserService.condense() itself short-circuits on empty
+        history (real implementation, not mocked here) -- a first-turn
+        question has nothing to condense against, so it must reach
+        retrieval unchanged rather than round-trip through the LLM.
+        """
+        from app.config.settings import settings
+
+        captured = []
+        self._wire(monkeypatch, captured)
+        monkeypatch.setattr(settings, "FOLLOWUP_REWRITE_ENABLED", True)
+
+        ChatService.chat("What is this person's name?")
+
+        assert captured[0] == "What is this person's name?"
