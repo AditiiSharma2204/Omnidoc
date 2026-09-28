@@ -91,7 +91,23 @@ all persist in named volumes across restarts.
 
 This section is deliberately blunt — see it as the project's honest changelog.
 
-- **No streaming in the UI yet.** The `/chat/stream` endpoint exists; the frontend isn't wired to it.
+- **Streaming is wired to the UI now, but not yet live-verified end-to-end.**
+  `/chat/stream` previously returned a bare token stream with no citations
+  and no conversation persistence — wiring the frontend to that as-is
+  would have regressed both features. Fixed instead: `ChatService.stream()`
+  now yields newline-delimited JSON events (`{"type": "token", ...}` then
+  a final `{"type": "done", "conversation_id", "sources"}`), builds the
+  same cited/uncited sources `chat()` does, and persists both turns to
+  SQLite the same way. The frontend (`streamQuestion` in `chatApi.ts`,
+  wired into `ChatWindow.tsx`) reads it via `fetch`'s streaming body
+  reader (axios has no browser-side streaming reader) and renders tokens
+  incrementally into the assistant bubble. All logic is unit tested
+  (16/16 in `test_chat_service.py`, mocked retrieval/LLM, no live model)
+  and the frontend build is clean, but a real click-through against a
+  live Ollama call hasn't been done yet — free system RAM was at 2.83GB
+  when this was built, under the ~3.2-3.4GB level that already caused two
+  reproducible reranker SIGSEGVs earlier today, so a live attempt was
+  deliberately skipped rather than risked.
 - **Query rewriting, measured — and correctly kept off by default.**
   `QueryRewriteService` (HyDE-style: embeds an LLM-generated hypothetical
   answer instead of the raw question) is wired into retrieval and unit
@@ -252,8 +268,9 @@ Short-term priorities, roughly in order: query rewriting for
 follow-ups (condense "what about the second one?" into a standalone
 retrieval query, distinct from the HyDE feature — see the conversation-
 memory limitation above); calibrate the
-refusal threshold against real reranker scores; streaming in the UI
-(markdown rendering is already done); a document-scoped retrieval eval
+refusal threshold against real reranker scores; a live click-through
+verification of streaming now that it's wired to the UI (see Known
+limitations); a document-scoped retrieval eval
 alongside the current global one (the corpus-crowding finding in
 `backend/eval/README.md`); grow the evaluation dataset past 50
 questions (contracts/legal documents, adversarial content); page-level

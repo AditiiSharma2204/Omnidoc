@@ -1,3 +1,5 @@
+import json
+
 from app.prompts.prompt_builder import PromptBuilder
 from app.services.citation_service import CitationService
 from app.services.conversation_service import ConversationService
@@ -109,21 +111,20 @@ class ChatService:
         """
         Streaming chat.
 
-        Note: sources/citations aren't available here the way they
-        are in `chat()` -- the caller only gets a token stream, with
-        no way to attach the sources list once generation finishes.
-        Wiring citations (and persisting the turn to conversation
-        history) into the streaming response is tracked alongside
-        "wire up streaming to the frontend" on the roadmap; both need
-        the same change (a structured SSE response with a final
-        sources event, not a bare text stream).
+        Yields newline-delimited JSON events so the caller gets both
+        the token stream AND, once generation finishes, the same
+        sources/citations and conversation persistence `chat()`
+        provides -- previously a documented gap (bare text stream,
+        no sources, no history saved). Event shapes:
+          {"type": "token", "token": "..."}
+          {"type": "done", "conversation_id": "...", "sources": [...]}
         """
 
-        history = (
-            ConversationService.get_recent_messages(conversation_id)
-            if conversation_id
-            and ConversationService.conversation_exists(conversation_id)
-            else []
+        conversation_id = ConversationService.get_or_create(
+            conversation_id
+        )
+        history = ConversationService.get_recent_messages(
+            conversation_id
         )
 
         retrieved_chunks = RetrievalService.search(
@@ -132,9 +133,39 @@ class ChatService:
             document_ids=document_ids,
         )
 
-        system, user, _contexts = PromptBuilder.build(
+        system, user, contexts = PromptBuilder.build(
             question=question,
             retrieved_chunks=retrieved_chunks,
         )
 
-        return LLMService.stream(system=system, user=user, history=history)
+        def _generate():
+            answer_parts = []
+
+            for token in LLMService.stream(
+                system=system, user=user, history=history
+            ):
+                answer_parts.append(token)
+                yield json.dumps({"type": "token", "token": token}) + "\n"
+
+            answer = "".join(answer_parts)
+            sources = cls._build_sources(answer, contexts)
+
+            ConversationService.add_message(
+                conversation_id, role="user", content=question
+            )
+            ConversationService.add_message(
+                conversation_id,
+                role="assistant",
+                content=answer,
+                sources=sources,
+            )
+
+            yield json.dumps(
+                {
+                    "type": "done",
+                    "conversation_id": conversation_id,
+                    "sources": sources,
+                }
+            ) + "\n"
+
+        return _generate()

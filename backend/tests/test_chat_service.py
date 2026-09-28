@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.schemas.retrieval import RetrievedChunk
@@ -225,3 +227,79 @@ class TestConversationMemory:
         assert [m["role"] for m in history] == ["user", "assistant"]
         assert history[0]["content"] == "question"
         assert history[1]["content"] == "answer"
+
+
+class TestChatStream:
+    """
+    ChatService.stream() used to be a bare token generator with no
+    sources and no conversation persistence -- these tests cover the
+    fix: it now yields NDJSON token events plus a final "done" event
+    carrying the same sources/citations shape as chat(), and persists
+    both turns exactly like chat() does. Fully mocked, no real
+    retrieval or LLM call.
+    """
+
+    def _wire(self, monkeypatch, chunks, tokens):
+        import app.services.chat_service as cs
+
+        monkeypatch.setattr(
+            cs.RetrievalService, "search", lambda **kwargs: chunks
+        )
+        monkeypatch.setattr(
+            cs.LLMService,
+            "stream",
+            lambda system, user, history=None: iter(tokens),
+        )
+
+    def _events(self, monkeypatch, chunks, tokens, **kwargs):
+        self._wire(monkeypatch, chunks, tokens)
+        lines = list(ChatService.stream("question", **kwargs))
+        return [json.loads(line) for line in lines]
+
+    def test_yields_a_token_event_per_token(self, monkeypatch):
+        events = self._events(monkeypatch, [], ["Hel", "lo"])
+
+        token_events = [e for e in events if e["type"] == "token"]
+        assert [e["token"] for e in token_events] == ["Hel", "lo"]
+
+    def test_final_event_is_done_with_conversation_id_and_sources(
+        self, monkeypatch
+    ):
+        chunks = [_chunk("c1", heading="Skills", title="resume.pdf")]
+        events = self._events(monkeypatch, chunks, ["Answer [1]."])
+
+        assert events[-1]["type"] == "done"
+        assert events[-1]["conversation_id"]
+        assert events[-1]["sources"] == [
+            {
+                "index": 1,
+                "document": "resume.pdf",
+                "heading": "Skills",
+                "page": None,
+                "cited": True,
+            }
+        ]
+
+    def test_persists_both_turns_after_streaming_completes(
+        self, monkeypatch
+    ):
+        from app.services.conversation_service import ConversationService
+
+        events = self._events(monkeypatch, [], ["The ", "answer."])
+        conversation_id = events[-1]["conversation_id"]
+
+        history = ConversationService.get_full_history(conversation_id)
+        assert [m["role"] for m in history] == ["user", "assistant"]
+        assert history[0]["content"] == "question"
+        assert history[1]["content"] == "The answer."
+        assert history[1]["sources"] == []
+
+    def test_continuing_a_conversation_id_reuses_it(self, monkeypatch):
+        events = self._events(monkeypatch, [], ["answer"])
+        first_id = events[-1]["conversation_id"]
+
+        second_events = self._events(
+            monkeypatch, [], ["answer two"], conversation_id=first_id
+        )
+
+        assert second_events[-1]["conversation_id"] == first_id

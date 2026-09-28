@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { askQuestion, getConversationHistory } from "../../api/chatApi";
+import { streamQuestion, getConversationHistory } from "../../api/chatApi";
 import Message from "./Message";
 import type { ChatResponse } from "../../types/chat";
 import { useDocuments } from "../../context/DocumentContext";
@@ -82,42 +82,53 @@ export default function ChatWindow() {
         role: "user",
         text: userQuestion,
       },
+      {
+        role: "assistant",
+        text: "",
+      },
     ]);
 
     setQuestion("");
 
     setLoading(true);
 
+    // Both callbacks below only ever touch the last message (the
+    // assistant placeholder just pushed above) -- streaming can't
+    // overlap with another sendMessage() call since the input is
+    // disabled via `loading` while a stream is in flight.
+    function updateLastMessage(patch: Partial<ChatMessage>) {
+      setMessages((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = { ...next[next.length - 1], ...patch };
+        return next;
+      });
+    }
+
     try {
-      const response: ChatResponse = await askQuestion(
+      await streamQuestion(
         userQuestion,
         conversationId,
-      );
-
-      setConversationId(response.conversation_id);
-      localStorage.setItem(
-        CONVERSATION_ID_STORAGE_KEY,
-        response.conversation_id,
-      );
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          text: response.answer,
-          sources: response.sources,
+        (token) => {
+          setMessages((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            next[next.length - 1] = { ...last, text: last.text + token };
+            return next;
+          });
         },
-      ]);
+        (event) => {
+          setConversationId(event.conversation_id);
+          localStorage.setItem(
+            CONVERSATION_ID_STORAGE_KEY,
+            event.conversation_id,
+          );
+          updateLastMessage({ sources: event.sources });
+        },
+      );
     } catch (err) {
       console.error(err);
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          text: "Something went wrong.",
-        },
-      ]);
+      updateLastMessage({ text: "Something went wrong." });
     }
 
     setLoading(false);

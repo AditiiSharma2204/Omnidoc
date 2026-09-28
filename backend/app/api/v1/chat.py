@@ -41,7 +41,7 @@ def chat_stream(request: ChatRequest):
 
     return StreamingResponse(
         generator,
-        media_type="text/plain",
+        media_type="application/x-ndjson",
     )
 
 
