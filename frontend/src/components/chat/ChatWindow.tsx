@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { askQuestion } from "../../api/chatApi";
+import { askQuestion, getConversationHistory } from "../../api/chatApi";
 import Message from "./Message";
 import type { ChatResponse } from "../../types/chat";
 import { useDocuments } from "../../context/DocumentContext";
@@ -10,6 +10,8 @@ interface ChatMessage {
   text: string;
   sources?: ChatResponse["sources"];
 }
+
+const CONVERSATION_ID_STORAGE_KEY = "omnidoc:conversationId";
 
 export default function ChatWindow() {
 
@@ -24,10 +26,50 @@ export default function ChatWindow() {
   // The backend hands back a conversation_id on every response; once
   // we have one, every following question is sent with it so the
   // model sees prior turns as real conversation history, not just
-  // retrieved document context. Cleared when the user starts a new
-  // chat (documents.length === 0 branch resets the whole page state
-  // anyway, but this is explicit in case that ever changes).
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  // retrieved document context. Persisted to localStorage so a page
+  // reload continues the same conversation instead of silently
+  // starting a new one while the old one sits orphaned in the DB.
+  const [conversationId, setConversationId] = useState<string | null>(
+    () => localStorage.getItem(CONVERSATION_ID_STORAGE_KEY),
+  );
+
+  // On mount, if a conversation id survived a reload, fetch its
+  // history from the backend so the UI isn't blank while the server
+  // still has the full transcript. A 404 means the conversation no
+  // longer exists (e.g. a fresh DB) -- clear the stale id rather than
+  // send it on the next request.
+  useEffect(() => {
+    if (!conversationId) return;
+
+    let cancelled = false;
+
+    getConversationHistory(conversationId)
+      .then((history) => {
+        if (cancelled) return;
+
+        setMessages(
+          history.messages.map((m) => ({
+            role: m.role,
+            text: m.content,
+            sources: m.sources ?? undefined,
+          })),
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+
+        localStorage.removeItem(CONVERSATION_ID_STORAGE_KEY);
+        setConversationId(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // Only ever run for the id we loaded from localStorage on mount --
+    // this isn't meant to re-fetch on every new conversation_id the
+    // chat flow itself produces.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function sendMessage(customQuestion?: string) {
     const userQuestion = customQuestion ?? question;
@@ -53,6 +95,10 @@ export default function ChatWindow() {
       );
 
       setConversationId(response.conversation_id);
+      localStorage.setItem(
+        CONVERSATION_ID_STORAGE_KEY,
+        response.conversation_id,
+      );
 
       setMessages((prev) => [
         ...prev,

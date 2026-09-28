@@ -21,3 +21,23 @@ export interface ChatResponse {
     conversation_id: string;
 
 }
+
+export interface MessageOut {
+
+    role: "user" | "assistant";
+
+    content: string;
+
+    sources: Source[] | null;
+
+    created_at: string;
+
+}
+
+export interface ConversationHistoryResponse {
+
+    conversation_id: string;
+
+    messages: MessageOut[];
+
+}

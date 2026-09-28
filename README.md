@@ -155,12 +155,15 @@ This section is deliberately blunt — see it as the project's honest changelog.
   vocabulary with the target chunk — condensing follow-ups into
   standalone retrieval queries is a distinct, not-yet-built piece (see
   roadmap).
-- **No persistent chat history across page reloads.** Conversation state
-  lives in SQLite server-side (survives a backend restart) and is
-  addressable via `GET /api/v1/conversations/{id}`, but the frontend
-  doesn't yet store the current `conversation_id` anywhere durable —
-  refreshing the page starts a new conversation client-side even though
-  the old one is still in the database.
+- **Chat history now survives a page reload.** `conversation_id` is
+  persisted to `localStorage`; on mount, `ChatWindow` fetches the full
+  transcript via `GET /api/v1/conversations/{id}` and re-renders it
+  before the user asks anything new. A stale id (conversation deleted
+  or DB reset) 404s and the client clears it and starts fresh rather
+  than sending a dead id forever. Verified against the real endpoint
+  (not just types): `TestClient` round-trip against a seeded
+  conversation confirmed the response shape matches what the frontend
+  deserializes, and that an unknown id returns 404 as expected.
 - **No auth, no multi-user support.**
 - **Docker Compose setup exists, syntax-validated, build-verified on this
   machine only partially.** `docker compose config` resolves cleanly
@@ -236,8 +239,7 @@ This section is deliberately blunt — see it as the project's honest changelog.
 Short-term priorities, roughly in order: query rewriting for
 follow-ups (condense "what about the second one?" into a standalone
 retrieval query, distinct from the HyDE feature — see the conversation-
-memory limitation above); persist `conversation_id` client-side so a
-page reload doesn't lose the active conversation; calibrate the
+memory limitation above); calibrate the
 refusal threshold against real reranker scores; streaming in the UI
 (markdown rendering is already done); a document-scoped retrieval eval
 alongside the current global one (the corpus-crowding finding in
