@@ -37,6 +37,7 @@ from app.services.llm_service import LLMService  # noqa: E402
 from app.services.retrieval_service import RetrievalService  # noqa: E402
 from eval.metrics import (  # noqa: E402
     AggregateResults,
+    _chunk_is_relevant,
     answer_contains_expected_facts,
     is_refusal,
     reciprocal_rank,
@@ -110,6 +111,92 @@ def run_retrieval_eval(
     elapsed = time.monotonic() - start
 
     return results, elapsed
+
+
+def run_threshold_calibration(items: list[dict], top_k: int) -> dict:
+    """
+    Runs hybrid+rerank retrieval for every factual question and splits
+    the resulting (post-rerank) `.score` values into two buckets --
+    relevant vs. irrelevant chunk, per the same keyword-substring
+    proxy the rest of the harness uses -- so `RERANK_SCORE_THRESHOLD`
+    can be picked from real measured scores instead of guessed.
+
+    Retrieval-only: no Ollama call, same as the default (no
+    --with-generation) path.
+    """
+    relevant_scores: list[float] = []
+    irrelevant_scores: list[float] = []
+    per_question = []
+
+    for item in items:
+        if item["category"] != "factual":
+            continue
+
+        retrieved = RetrievalService.search(
+            query=item["question"],
+            top_k=top_k,
+            mode="hybrid",
+            rerank=True,
+        )
+        keywords = item["expected_keywords"]
+
+        q_relevant = []
+        q_irrelevant = []
+        for chunk in retrieved:
+            is_relevant = _chunk_is_relevant(chunk.text, keywords)
+            if is_relevant:
+                relevant_scores.append(chunk.score)
+                q_relevant.append(chunk.score)
+            else:
+                irrelevant_scores.append(chunk.score)
+                q_irrelevant.append(chunk.score)
+
+        per_question.append(
+            {
+                "id": item["id"],
+                "question": item["question"],
+                "relevant_scores": q_relevant,
+                "irrelevant_scores": q_irrelevant,
+            }
+        )
+
+    def _stats(values: list[float]) -> dict:
+        if not values:
+            return {"n": 0}
+        sorted_v = sorted(values)
+        n = len(sorted_v)
+        return {
+            "n": n,
+            "min": sorted_v[0],
+            "max": sorted_v[-1],
+            "mean": sum(sorted_v) / n,
+            "median": sorted_v[n // 2],
+        }
+
+    # Candidate thresholds: how many relevant chunks would be wrongly
+    # dropped, and how many irrelevant chunks would be correctly
+    # dropped, at each of a few round-number cutoffs plus the min
+    # relevant score itself (the highest threshold that drops zero
+    # relevant chunks in this sample).
+    candidates = sorted(
+        {-5.0, -3.0, -1.0, 0.0, 1.0}
+        | ({min(relevant_scores)} if relevant_scores else set())
+    )
+    threshold_sweep = [
+        {
+            "threshold": t,
+            "relevant_dropped": sum(1 for s in relevant_scores if s < t),
+            "irrelevant_dropped": sum(1 for s in irrelevant_scores if s < t),
+        }
+        for t in candidates
+    ]
+
+    return {
+        "relevant": _stats(relevant_scores),
+        "irrelevant": _stats(irrelevant_scores),
+        "threshold_sweep": threshold_sweep,
+        "per_question": per_question,
+    }
 
 
 def warm_up_ollama_with_low_contention() -> None:
@@ -207,6 +294,17 @@ def main():
         ),
     )
     parser.add_argument(
+        "--calibrate-threshold",
+        action="store_true",
+        help=(
+            "Run hybrid+rerank retrieval and report the real "
+            "reranker score distribution for relevant vs. irrelevant "
+            "chunks, to pick RERANK_SCORE_THRESHOLD from data instead "
+            "of a guess. Retrieval-only (no Ollama). Ignores "
+            "--with-generation/--compare-modes."
+        ),
+    )
+    parser.add_argument(
         "--with-query-rewrite",
         action="store_true",
         help=(
@@ -241,6 +339,34 @@ def main():
         # needs Ollama at all, so there's no reason to keep it
         # resident and competing for memory.
         LLMService.unload()
+
+    if args.calibrate_threshold:
+        print("=== Reranker score threshold calibration (hybrid+rerank) ===")
+        result = run_threshold_calibration(items, top_k=args.top_k[0])
+        print(f"Relevant chunks:   {result['relevant']}")
+        print(f"Irrelevant chunks: {result['irrelevant']}")
+        print()
+        print(f"{'threshold':>10} | {'relevant dropped':>17} | {'irrelevant dropped':>19}")
+        for row in result["threshold_sweep"]:
+            print(
+                f"{row['threshold']:>10.2f} | {row['relevant_dropped']:>17} "
+                f"| {row['irrelevant_dropped']:>19}"
+            )
+
+        RESULTS_DIR.mkdir(exist_ok=True)
+        out_path = (
+            RESULTS_DIR
+            / f"threshold_calibration_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        out_path.write_text(
+            json.dumps(
+                {"timestamp": datetime.now(timezone.utc).isoformat(), **result},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"\nFull report written to {out_path}")
+        return
 
     if args.compare_modes:
         print("=== Retrieval ablation: dense vs bm25 vs hybrid vs hybrid+rerank (vs +query_rewrite) ===")

@@ -28,6 +28,14 @@ python -m eval.run_eval --compare-modes
 # Also add a hybrid+rerank+rewrite variant (HyDE-style query rewriting --
 # adds one LLM call per question, slow; see "Query rewriting" below)
 python -m eval.run_eval --compare-modes --with-query-rewrite
+
+# Sample real reranker scores (relevant vs. irrelevant chunk) to pick
+# RERANK_SCORE_THRESHOLD from data instead of a guess. Retrieval-only,
+# no Ollama needed -- see the top-level README's "Refusal threshold"
+# entry under Known limitations for current status (a live run has
+# reproducibly SIGSEGV'd on this machine, not a code issue; the
+# calibration math itself is unit tested in tests/test_run_eval.py)
+python -m eval.run_eval --calibrate-threshold
 ```
 
 ## What it measures

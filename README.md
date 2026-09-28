@@ -108,15 +108,27 @@ This section is deliberately blunt — see it as the project's honest changelog.
   now because the data says so, not because it was never measured. See
   `backend/eval/README.md`'s "Query rewriting" section for the full
   numbers.
-- **Refusal threshold is implemented but uncalibrated.**
+- **Refusal threshold is implemented but uncalibrated -- live
+  calibration attempted, blocked by this machine's memory instability.**
   `RetrievalService._apply_score_threshold` can drop reranked chunks below
   `RERANK_SCORE_THRESHOLD` before they ever reach the LLM (mechanism unit
-  tested: `tests/test_reranker_service.py::TestScoreThreshold`), but the
-  setting defaults to `None` (disabled) because a real cutoff needs
-  sampling actual reranker scores across known relevant vs. irrelevant
-  chunks, which needs the same live eval runs currently blocked (see
-  above). Shipping a guessed threshold risks silently refusing correct
-  answers, which is worse than not having the feature at all.
+  tested: `tests/test_reranker_service.py::TestScoreThreshold`). Built a
+  `--calibrate-threshold` mode in the eval harness
+  (`eval/run_eval.py::run_threshold_calibration`) to sample real
+  reranker scores across the 31 factual questions, split by
+  relevant/irrelevant chunk (same keyword proxy the rest of the harness
+  uses), and sweep candidate thresholds by how many relevant chunks
+  each would wrongly drop. Its pure logic is unit tested against fixed,
+  known scores (`tests/test_run_eval.py`, 4 tests, all passing) -- but
+  the actual *live* run (real BGE-M3 + reranker) SIGSEGV'd twice in a
+  row, reproducibly, right as the reranker's weights finished loading,
+  with free system RAM at ~3.2-3.4GB (below this machine's documented
+  danger zone -- see the memory-constrained note below). Retrying
+  didn't help because the cause is the machine's memory state, not the
+  code. `RERANK_SCORE_THRESHOLD` stays `None` (disabled) until this can
+  actually be run -- shipping a guessed threshold risks silently
+  refusing correct answers, which is worse than not having the feature
+  at all.
 - **Inline citations, live-verified against the real model.** The first
   live test (after a machine restart resolved the earlier instability)
   showed the mechanism working but the model citing nothing at all —
