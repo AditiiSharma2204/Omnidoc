@@ -42,8 +42,8 @@ python -m eval.run_eval --calibrate-threshold
 # the right document (via document_ids) recovers recall the q12
 # corpus-crowding finding below lost. Retrieval-only, no Ollama --
 # see the top-level README's Known limitations for current status
-# (unit tested in tests/test_run_eval.py; no live run yet, same
-# memory-instability blocker as --calibrate-threshold)
+# (unit tested in tests/test_run_eval.py; live run blocked by the
+# same reranker-load crash as --calibrate-threshold)
 python -m eval.run_eval --document-scoped
 ```
 

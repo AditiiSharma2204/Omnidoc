@@ -139,40 +139,33 @@ This section is deliberately blunt — see it as the project's honest changelog.
   mocked LLM). No live measurement yet of whether it actually improves
   retrieval on real follow-up questions — same live-eval blocker as the
   other unmeasured items on this list.
-- **Refusal threshold is implemented but uncalibrated -- live
-  calibration attempted, blocked by this machine's memory instability.**
-  `RetrievalService._apply_score_threshold` can drop reranked chunks below
-  `RERANK_SCORE_THRESHOLD` before they ever reach the LLM (mechanism unit
-  tested: `tests/test_reranker_service.py::TestScoreThreshold`). Built a
-  `--calibrate-threshold` mode in the eval harness
-  (`eval/run_eval.py::run_threshold_calibration`) to sample real
-  reranker scores across the 31 factual questions, split by
-  relevant/irrelevant chunk (same keyword proxy the rest of the harness
-  uses), and sweep candidate thresholds by how many relevant chunks
-  each would wrongly drop. Its pure logic is unit tested against fixed,
-  known scores (`tests/test_run_eval.py`, 4 tests, all passing) -- but
-  the actual *live* run (real BGE-M3 + reranker) SIGSEGV'd twice in a
-  row, reproducibly, right as the reranker's weights finished loading,
-  with free system RAM at ~3.2-3.4GB (below this machine's documented
-  danger zone -- see the memory-constrained note below). Retrying
-  didn't help because the cause is the machine's memory state, not the
-  code. `RERANK_SCORE_THRESHOLD` stays `None` (disabled) until this can
-  actually be run -- shipping a guessed threshold risks silently
-  refusing correct answers, which is worse than not having the feature
-  at all.
-- **Document-scoped retrieval eval is implemented but not yet run
-  live.** The corpus-crowding finding below (`q12`) motivated a
-  `--document-scoped` harness mode (`eval/run_eval.py::run_document_scoped_eval`)
-  that re-runs each `source_document`-tagged question's retrieval
-  scoped to just that document (via the `document_ids` parameter,
-  built on Day 1 but never exercised by the eval until now) and
-  compares it against the normal unscoped run. All 31 factual
-  questions in `dataset.json` are now tagged with `source_document`
-  (12 were untagged before this). Unit tested (4 tests,
-  `TestRunDocumentScopedEval` in `tests/test_run_eval.py`), but not
-  run live yet -- same memory-instability blocker as threshold
-  calibration above, so whether scoping actually recovers `q12` is
-  unconfirmed, not assumed.
+- **Refusal threshold is implemented but uncalibrated, and document-
+  scoped retrieval eval is implemented but unverified -- both blocked
+  by a reproducible native crash loading the reranker, not a memory-
+  headroom issue as first suspected.**
+  `RetrievalService._apply_score_threshold` (mechanism unit tested:
+  `tests/test_reranker_service.py::TestScoreThreshold`) and the
+  `--document-scoped` harness mode
+  (`eval/run_eval.py::run_document_scoped_eval`, which scopes each
+  `source_document`-tagged question's retrieval to just that document
+  via `document_ids` and compares it against the unscoped run -- all 31
+  factual questions in `dataset.json` are now tagged) both need a real
+  cross-encoder reranker load to produce real numbers. Both are unit
+  tested against fixed inputs (`tests/test_run_eval.py`, 8 tests, all
+  passing) but a *live* run has SIGSEGV'd three times in a row,
+  reproducibly, at the exact same point (right as the reranker's
+  weights finish loading) -- first twice at ~3.2-3.4GB free RAM, then
+  again on a fresh attempt at 3.88GB free, which was expected to be
+  safely above that. That rules out "just below some memory threshold"
+  as the explanation; the actual cause is still unknown (plausibly a
+  native library/driver issue specific to this reranker model on this
+  machine's Windows/CUDA setup) and would need real debugging (e.g. a
+  minimal repro outside pytest/this harness, or trying a different
+  reranker checkpoint) rather than another retry. `RERANK_SCORE_THRESHOLD`
+  stays `None` (disabled) and the document-scoped hypothesis stays
+  unconfirmed until that's actually done -- shipping a guessed
+  threshold risks silently refusing correct answers, which is worse
+  than not having the feature at all.
 - **Inline citations, live-verified against the real model.** The first
   live test (after a machine restart resolved the earlier instability)
   showed the mechanism working but the model citing nothing at all —
