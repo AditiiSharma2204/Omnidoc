@@ -51,6 +51,16 @@ def wired_document_service(tmp_path, monkeypatch):
     monkeypatch.setattr(
         settings, "VECTORSTORE_DIR", str(tmp_path / "vectorstore")
     )
+    # Same lesson, same fix: MetadataService now writes to SQLite
+    # instead of per-folder JSON, so it needs isolating here too, or
+    # these tests would write into this machine's real database.
+    monkeypatch.setattr(
+        settings, "DATABASE_PATH", str(tmp_path / "test.db")
+    )
+
+    from app.db.database import init_db
+
+    init_db()
 
     async def fake_validate(file):
         content = await file.read()

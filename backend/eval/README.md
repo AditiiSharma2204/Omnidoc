@@ -152,7 +152,7 @@ only 3 are real:
   next harness improvement: measure global retrieval *and*
   document-scoped retrieval side by side.
 
-## Query rewriting (HyDE) — implemented and unit-tested, live measurement blocked
+## Query rewriting (HyDE) — measured, correctly kept off by default
 
 `app/services/query_rewrite_service.py` implements HyDE-style query
 rewriting: instead of embedding the raw question for dense retrieval,
@@ -163,39 +163,71 @@ embed *that*. This directly targets the residual-miss pattern above
 is written in the same register as the real chunk, so it should embed
 much closer to it than the bare question does. BM25 still gets the
 literal query (a fabricated hypothetical would just inject noise into
-lexical matching); only the dense leg's embedding is affected. Off by
-default (`settings.QUERY_REWRITE_ENABLED = False`) because it adds a
-real LLM call to every query -- a genuine latency cost, not just a
-config flag -- and that cost needs to be weighed against a measured
-quality gain before defaulting it on.
+lexical matching); only the dense leg's embedding is affected.
 
-**The "measured quality gain" part is not done yet.** Every attempt
-to run `--compare-modes --with-query-rewrite` on this machine, in this
-session, failed -- but each failure was a different, worsening
-symptom, all downstream of the environment instability this session
-already diagnosed once (see the CUDA section below): first the same
-Ollama/CUDA crash (recovered by increasing the retry budget and, when
-that still wasn't reliable, by warming Ollama up before any torch
-model loads at all, not mid-run -- reloading `SentenceTransformer` in
-the same process turned out to hit an unrelated transformers library
-bug), then a `ValueError` reloading BGE-M3, then finally a raw
-`"memory allocation of 340 bytes failed"` with 4GB+ system RAM
-free -- a signal so far outside normal OOM territory that it reads as
-accumulated Windows/driver-level instability from this session's many
-earlier crashes, not something more retry logic or code changes can
-fix. Confirmed the code itself isn't the problem: the full test suite
-(73 tests, fully mocked, no real model loads) runs cleanly and fast
-throughout all of this.
+**Getting a live measurement took a full session first (see the CUDA
+section below for the diagnosis) -- once the machine was healthy
+again, `--compare-modes --with-query-rewrite` finally completed:**
 
-**What's actually shipped:** the feature, wired into
-`RetrievalService.search(query_rewrite=...)`, off by default, with
-9 unit tests covering the LLM call shape and the dense-only/BM25-
-untouched wiring (`tests/test_query_rewrite_service.py`,
-`tests/test_hybrid_retrieval.py::TestQueryRewriteWiring`) --
-everything short of the live retrieval-quality number. Re-run
-`--compare-modes --with-query-rewrite` (ideally after a machine
-restart, given the failure signature above) before deciding whether
-to flip `QUERY_REWRITE_ENABLED` to `True` by default.
+| variant               | Recall@1 | Recall@3 | Recall@5 | MRR   | s/question |
+|------------------------|----------|----------|----------|-------|------------|
+| hybrid+rerank          | 83.9%    | 96.8%    | 96.8%    | 0.903 | ~3.5s      |
+| hybrid+rerank+rewrite  | 83.9%    | 96.8%    | 96.8%    | 0.903 | ~7.0s      |
+
+**Zero measured quality gain, double the latency.** Query rewriting
+adds one full real LLM call per question before retrieval even starts,
+and on this corpus it didn't move Recall@k or MRR by a single
+percentage point.
+
+A follow-up per-question check made the picture worse, not better: a
+second run showed 2 misses at k=5 instead of the 1 the ablation table
+above implies -- same dataset, same settings, different result. The
+rewrite step samples the hypothetical answer at `temperature=0.3`
+(see `QueryRewriteService`), so the embedded text -- and therefore
+which chunks rank where -- varies run to run in a way the rest of the
+pipeline (dense/BM25/hybrid/rerank) simply doesn't. That's a second,
+independent reason to leave it off by default: it doesn't just fail
+to help, it makes retrieval quality non-deterministic for no benefit.
+
+**Conclusion:** `QUERY_REWRITE_ENABLED=False` remains the default --
+now because two rounds of real measurement say so, not because
+measurement was blocked. The feature stays in the codebase (wired
+into `RetrievalService.search(query_rewrite=...)`, 9 unit tests) as an
+opt-in for a corpus where it might actually help (e.g. one with many
+more "who/what is the name of X" style questions), but it is not a
+recommended default on this evidence.
+
+## Inline citations — live-verified, prompt tuned on real evidence
+
+The first live test of the citation feature (`app/services/citation_service.py`,
+`ChatService._build_sources`) was a clean miss: technically correct
+end to end (retrieval, generation, sources API all worked), but the
+model cited *nothing* -- zero `[N]` markers across 5 retrieved
+sources, despite an explicit citation rule in the system prompt. Root
+cause, on inspection: the rule was #7 of 7, competing with six other
+instructions for a 3B model's limited instruction-following budget.
+
+Rewrote the prompt around a citation-first format block with a worked
+example, plus a short reminder restated immediately before generation
+starts (recency helps small models). Re-tested across 3 questions:
+
+- *"What internships did this person do?"* → cited exactly the 2
+  sources about internships, out of 5 retrieved candidates, correctly
+  leaving an unrelated career-salary spreadsheet chunk and a generic
+  "Summary" chunk uncited.
+- *"What programming languages does this person know?"* → cited
+  exactly the 1 relevant source.
+- *"What is the capital of France?"* (unanswerable) → still correctly
+  refused with `NO_CONTEXT_MESSAGE`, unaffected by the prompt change.
+
+Selective, correct citation across all 3 -- not just "citations
+appear at all", but "citations point at the right sources and are
+omitted for irrelevant ones." One cosmetic rough edge: bracket
+placement is sometimes at the start of a sentence instead of the end
+(`[1] She interned at...` rather than `She interned at... [1]`); it
+doesn't affect which source gets credited, so left as a known,
+low-priority polish item rather than over-engineering the prompt
+further for a formatting detail.
 
 ## A real bug found getting this far: Ollama vs. PyTorch on this machine
 

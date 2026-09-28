@@ -58,7 +58,7 @@ class DocumentService:
             status="uploaded",
         )
 
-        MetadataService.save(document_folder, metadata)
+        MetadataService.save(metadata)
 
         # -----------------------------------------
         # Step 5-7: Parse, chunk, embed, index
@@ -81,21 +81,21 @@ class DocumentService:
             )
 
             metadata.status = "parsed"
-            MetadataService.save(document_folder, metadata)
+            MetadataService.save(metadata)
 
             ChunkingService.chunk_document(
                 document_folder
             )
 
             metadata.status = "chunked"
-            MetadataService.save(document_folder, metadata)
+            MetadataService.save(metadata)
 
             EmbeddingService.generate(
                 document_folder
             )
 
             metadata.status = "embedded"
-            MetadataService.save(document_folder, metadata)
+            MetadataService.save(metadata)
 
             FAISSService.add_document(
                 document_folder
@@ -119,10 +119,7 @@ class DocumentService:
         # -----------------------------------------
         # Step 8: Save final metadata
         # -----------------------------------------
-        MetadataService.save(
-            document_folder,
-            metadata,
-        )
+        MetadataService.save(metadata)
 
         # -----------------------------------------
         # Step 9: Return response
@@ -144,36 +141,17 @@ class DocumentService:
     @staticmethod
     def list_documents() -> list[DocumentMetadata]:
         """
-        Returns metadata for every document currently on disk,
-        newest first.
+        Returns metadata for every document, newest first. A single
+        indexed query now instead of scanning every folder and
+        parsing a JSON file in each one.
         """
-
-        documents_dir = Path(settings.DOCUMENTS_DIR)
-
-        if not documents_dir.exists():
-            return []
-
-        results = []
-
-        for folder in documents_dir.iterdir():
-
-            if not folder.is_dir():
-                continue
-
-            metadata = MetadataService.load(folder)
-
-            if metadata is not None:
-                results.append(metadata)
-
-        results.sort(key=lambda m: m.upload_time, reverse=True)
-
-        return results
+        return MetadataService.list_all()
 
     @staticmethod
     def delete_document(document_id: str) -> None:
         """
-        Removes a document from disk and rebuilds the FAISS index
-        without it.
+        Removes a document (disk + metadata row) and rebuilds the
+        FAISS/BM25 indexes without it.
 
         The index isn't ID-addressable (IndexFlatIP has no stable
         per-vector delete), so a full rebuild from the remaining
@@ -187,6 +165,7 @@ class DocumentService:
             raise DocumentNotFoundException(document_id)
 
         shutil.rmtree(document_folder)
+        MetadataService.delete(document_id)
 
         FAISSService.rebuild_index(Path(settings.DOCUMENTS_DIR))
         BM25Service.rebuild_index(Path(settings.DOCUMENTS_DIR))

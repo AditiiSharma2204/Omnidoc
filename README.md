@@ -27,10 +27,11 @@ React (Vite/TS)  →  FastAPI  →  Docling (parse)  →  Chunker  →  BGE-M3 (
 
 - **Parsing** — [Docling](https://github.com/docling-project/docling) converts PDF/DOCX/PPTX/XLSX to markdown.
 - **Chunking** — a custom markdown-hierarchy chunker with a size cap and overlap (`app/services/chunking_service.py`).
-- **Retrieval** — hybrid by default: FAISS (dense, BGE-M3) + BM25 (lexical), fused with Reciprocal Rank Fusion, then re-scored by a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`). Optional HyDE-style query rewriting (an LLM-generated hypothetical answer, embedded instead of the raw question) targets a specific measured gap but is off by default and not yet quality-measured — see below. A reranker-score refusal threshold (`RERANK_SCORE_THRESHOLD`) can drop weak matches before they reach the LLM at all, so a bad retrieval can't be confidently answered from — implemented and unit-tested, but off by default (uncalibrated; see below). Each stage is independently toggleable via settings (`RETRIEVAL_MODE`, `RERANK_ENABLED`, `QUERY_REWRITE_ENABLED`, `RERANK_SCORE_THRESHOLD`) — see `backend/eval/README.md` for what's actually been measured.
+- **Retrieval** — hybrid by default: FAISS (dense, BGE-M3) + BM25 (lexical), fused with Reciprocal Rank Fusion, then re-scored by a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`). Optional HyDE-style query rewriting exists but is off by default — measured to give zero quality gain while doubling latency on this corpus (see `backend/eval/README.md`). A reranker-score refusal threshold (`RERANK_SCORE_THRESHOLD`) can drop weak matches before they reach the LLM at all — implemented and unit-tested, off by default pending real score calibration. Each stage is independently toggleable via settings (`RETRIEVAL_MODE`, `RERANK_ENABLED`, `QUERY_REWRITE_ENABLED`, `RERANK_SCORE_THRESHOLD`).
 - **Embeddings** — [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) via `sentence-transformers`.
 - **Vector store** — FAISS (`IndexFlatIP`, cosine similarity via L2-normalized vectors).
-- **Generation** — [Ollama](https://ollama.com) running `qwen2.5:3b` locally, instructed to cite sources inline as `[1]`, `[2]`, etc. matching the prompt's context numbering. `ChatService` parses those markers and returns a `sources` list whose `index` fields line up exactly with them, each flagged `cited: true/false` — an out-of-range or hallucinated citation number simply matches nothing, rather than crashing or silently mapping to the wrong source.
+- **Metadata** — SQLite (`storage/app.db`), replacing the original per-document JSON files. A one-time, idempotent startup migration imports any pre-existing `metadata.json` files. Schema also reserves `conversations`/`messages` tables for the upcoming conversation-memory feature (not yet wired to any endpoint).
+- **Generation** — [Ollama](https://ollama.com) running `qwen2.5:3b` locally, instructed to cite sources inline as `[1]`, `[2]`, etc. matching the prompt's context numbering. `ChatService` parses those markers and returns a `sources` list whose `index` fields line up exactly with them, each flagged `cited: true/false` — an out-of-range or hallucinated citation number simply matches nothing, rather than crashing or silently mapping to the wrong source. Live-verified: the model selectively cites the right sources and omits irrelevant ones (see `backend/eval/README.md`).
 
 ## Setup
 
@@ -74,17 +75,22 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 - **No streaming in the UI yet.** The `/chat/stream` endpoint exists; the frontend isn't wired to it.
 - **No markdown rendering in the chat UI.**
-- **Query rewriting is implemented but its quality impact is unmeasured.**
+- **Query rewriting, measured — and correctly kept off by default.**
   `QueryRewriteService` (HyDE-style: embeds an LLM-generated hypothetical
   answer instead of the raw question) is wired into retrieval and unit
-  tested, off by default (`QUERY_REWRITE_ENABLED=False`). The live
-  before/after ablation is blocked, not skipped: every attempt this
-  session hit escalating machine instability (see the Ollama/CUDA note
-  below) ending in a raw allocation failure with 4GB+ RAM free — a strong
-  signal the dev machine needs a restart before more heavy ML runs are
-  reliable, not something more code changes fix. See
+  tested. After a machine restart resolved the earlier instability, the
+  full `--compare-modes --with-query-rewrite` ablation finally completed:
+  Recall@k and MRR came back **identical** to hybrid+rerank alone
+  (83.9%/96.8%/96.8%, MRR 0.903) — zero measured quality gain — while
+  **doubling** per-question latency (3.5s → 7.0s, one extra real LLM call
+  per query). A follow-up re-run also showed the specific miss it was
+  meant to fix varying between runs (1 miss vs. 2, on the same
+  dataset), consistent with the rewrite step's own sampling temperature
+  making retrieval quality non-deterministic in a way the rest of the
+  pipeline isn't. `QUERY_REWRITE_ENABLED=False` remains the default —
+  now because the data says so, not because it was never measured. See
   `backend/eval/README.md`'s "Query rewriting" section for the full
-  account before deciding whether to enable this by default.
+  numbers.
 - **Refusal threshold is implemented but uncalibrated.**
   `RetrievalService._apply_score_threshold` can drop reranked chunks below
   `RERANK_SCORE_THRESHOLD` before they ever reach the LLM (mechanism unit
@@ -94,19 +100,23 @@ This section is deliberately blunt — see it as the project's honest changelog.
   chunks, which needs the same live eval runs currently blocked (see
   above). Shipping a guessed threshold risks silently refusing correct
   answers, which is worse than not having the feature at all.
-- **Inline citations are unit-tested (32 tests) but not yet live-verified
-  end to end.** Every attempt to run a real chat request while writing
-  this feature hit the same ongoing machine instability documented
-  above and in `backend/eval/README.md` (a CUDA crash, then a
-  transformers library error, then a raw SIGSEGV on a single BGE-M3
-  load that has worked reliably dozens of times earlier this session) —
-  a real machine restart is needed before this can be confirmed against
-  a live model rather than mocked ones. The citation-parsing and
-  sources-building logic itself (`CitationService`, `ChatService.
-  _build_sources`) is plain Python string/dict handling with no ML
-  dependency, so it's exactly as trustworthy as its test coverage; what's
-  unverified is only whether Qwen2.5:3b reliably follows the "[N]" citing
-  instruction in practice, which needs a real model to check.
+- **Inline citations, live-verified against the real model.** The first
+  live test (after a machine restart resolved the earlier instability)
+  showed the mechanism working but the model citing nothing at all —
+  the original citation rule was rule 7 of 7 in the system prompt,
+  competing for attention with six other instructions. Rewrote the
+  prompt around a citation-first format block with a worked example,
+  and added a short reminder restated right before generation starts
+  (recency helps small models follow instructions). Re-tested across 3
+  questions: the model now cites correctly and *selectively* — e.g. for
+  "what internships did this person do", it cited exactly the 2 sources
+  about internships and correctly left an unrelated career-salary
+  spreadsheet chunk and a generic "Summary" chunk uncited, out of 5
+  retrieved candidates. The refusal path (a genuinely unanswerable
+  question) still returns `NO_CONTEXT_MESSAGE` correctly with the new
+  prompt. One known rough edge: citation bracket placement is sometimes
+  imperfect (e.g. `[1]` at the start of a sentence instead of the end) —
+  cosmetic, doesn't affect which source is credited.
 - **No OCR fallback** — scanned (image-only) PDFs will parse to near-empty text.
 - **No table/chart/image understanding** — Docling extracts tables as markdown text; nothing structures or reasons over them specially yet.
 - **No conversation memory** — each question is answered independently of chat history.
@@ -169,12 +179,12 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 ## Roadmap
 
-Short-term priorities, roughly in order: once the dev machine is stable
-again, live-verify citations against a real model and calibrate/measure
-query rewriting and the refusal threshold (all three implemented, all
-blocked on the same instability above); a document-scoped retrieval eval
-alongside the current global one (the corpus-crowding finding above);
-grow the dataset past 50 questions (contracts/legal documents,
+Short-term priorities, roughly in order: calibrate the refusal
+threshold against real reranker scores; conversation memory (schema
+already in place); streaming + markdown rendering in the UI; a
+document-scoped retrieval eval alongside the current global one (the
+corpus-crowding finding in `backend/eval/README.md`); grow the
+evaluation dataset past 50 questions (contracts/legal documents,
 adversarial content); page-level citation highlighting (jump to the
-cited PDF page, not just show the source card); streaming + markdown in
-the UI; and a Docker Compose setup that works from a clean clone.
+cited PDF page, not just show the source card); and a Docker Compose
+setup that works from a clean clone.

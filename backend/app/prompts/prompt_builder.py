@@ -26,7 +26,15 @@ class PromptBuilder:
 
     SYSTEM_PROMPT = (
         "You are OmniDoc AI, a document question-answering assistant.\n\n"
-        "Rules:\n"
+        "CITATION FORMAT (required on every answer): end each sentence "
+        "or bullet that states a fact from the context with the context "
+        "number in square brackets, e.g. [1]. Use [2][3] if two contexts "
+        "both support it. Example:\n"
+        "  \"She interned at Acme Corp in Chennai [1]. She also built a "
+        "KYC pipeline [2].\"\n"
+        "Every factual sentence needs a bracket. A sentence with no "
+        "bracket is treated as unsupported.\n\n"
+        "Other rules:\n"
         "1. Answer only using the supplied document context. Never invent facts.\n"
         "2. If the answer is not present in the context, say exactly: "
         "\"I couldn't find that information in the uploaded documents.\"\n"
@@ -36,12 +44,14 @@ class PromptBuilder:
         "them into one coherent answer instead of repeating each separately.\n"
         "5. Ignore near-duplicate passages.\n"
         "6. Keep answers concise, factual and well formatted (use lists or "
-        "short paragraphs where that helps readability).\n"
-        "7. Cite your sources inline using the context number in square "
-        "brackets, e.g. [1], right after the sentence or clause it "
-        "supports. Use [2][3] if two contexts both support the same "
-        "fact. Cite every factual claim you make from the context; do "
-        "not cite a context you did not actually use."
+        "short paragraphs where that helps readability) -- every list item "
+        "still needs its own [N] bracket.\n"
+        "7. Do not cite a context number you did not actually use."
+    )
+
+    CITATION_REMINDER = (
+        "Reminder: every factual sentence or bullet above must end with "
+        "a [N] bracket citing the context number it came from."
     )
 
     NO_CONTEXT_MESSAGE = (
@@ -107,7 +117,9 @@ class PromptBuilder:
             f"{context}\n\n"
             f"==============================\n"
             f"QUESTION\n\n"
-            f"{question}"
+            f"{question}\n\n"
+            f"==============================\n"
+            f"{cls.CITATION_REMINDER}"
         )
 
         return cls.SYSTEM_PROMPT, user, retrieved_chunks

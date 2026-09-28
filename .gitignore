@@ -44,6 +44,9 @@ backend/storage/documents/*
 backend/storage/vectorstore/*
 !backend/storage/vectorstore/.gitkeep
 
+# SQLite metadata/conversation DB
+backend/storage/app.db
+
 # Legacy/unused stub directory from an earlier layout (superseded by
 # backend/storage/vectorstore) -- not tracked at all.
 /vectorstore/

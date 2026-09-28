@@ -9,6 +9,7 @@ class Settings(BaseSettings):
 
     DOCUMENTS_DIR: str = "storage/documents"
     VECTORSTORE_DIR: str = "storage/vectorstore"
+    DATABASE_PATH: str = "storage/app.db"
 
     # LLM (Ollama)
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"

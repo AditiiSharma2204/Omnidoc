@@ -41,7 +41,7 @@ class TestSystemUserSplit:
 
         # The system prompt must be the instructions, not the
         # document content or question.
-        assert "Rules" in system
+        assert "Other rules" in system
         assert "Some retrieved content." not in system
 
         # The user message must carry the actual context/question,
@@ -71,6 +71,17 @@ class TestCitationInstruction:
         system, _, _ = PromptBuilder.build("q", [_chunk("content")])
 
         assert "[1]" in system
+
+    def test_user_message_ends_with_citation_reminder(self):
+        """
+        Small models follow instructions placed close to where they
+        start generating better than ones buried earlier -- this
+        reinforcement is deliberate, not redundant with the system
+        prompt's citation rule.
+        """
+        _, user, _ = PromptBuilder.build("q", [_chunk("content")])
+
+        assert user.rstrip().endswith(PromptBuilder.CITATION_REMINDER)
 
     def test_context_numbering_matches_returned_contexts_order(self):
         """
