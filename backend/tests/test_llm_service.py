@@ -104,3 +104,51 @@ class TestGenerateRetries:
 
         assert result == "back up"
         assert len(calls) == 2
+
+
+class TestMessageHistory:
+
+    def test_no_history_sends_just_system_and_user(self):
+        messages = LLMService._messages(system="sys", user="usr")
+
+        assert messages == [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "usr"},
+        ]
+
+    def test_history_inserted_between_system_and_new_user_turn(self):
+        history = [
+            {"role": "user", "content": "earlier question"},
+            {"role": "assistant", "content": "earlier answer"},
+        ]
+
+        messages = LLMService._messages(
+            system="sys", user="new question", history=history
+        )
+
+        assert messages == [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "earlier question"},
+            {"role": "assistant", "content": "earlier answer"},
+            {"role": "user", "content": "new question"},
+        ]
+
+    def test_generate_passes_history_through_to_ollama(self, monkeypatch):
+        captured = {}
+
+        def fake_post(url, json, timeout):
+            captured["messages"] = json["messages"]
+            return _FakeResponse(200, {"message": {"content": "ok"}})
+
+        monkeypatch.setattr(requests, "post", fake_post)
+
+        LLMService.generate(
+            system="sys",
+            user="new question",
+            history=[{"role": "user", "content": "prior"}],
+        )
+
+        assert captured["messages"][1] == {
+            "role": "user",
+            "content": "prior",
+        }

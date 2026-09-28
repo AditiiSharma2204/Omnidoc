@@ -21,6 +21,14 @@ export default function ChatWindow() {
 
   const [loading, setLoading] = useState(false);
 
+  // The backend hands back a conversation_id on every response; once
+  // we have one, every following question is sent with it so the
+  // model sees prior turns as real conversation history, not just
+  // retrieved document context. Cleared when the user starts a new
+  // chat (documents.length === 0 branch resets the whole page state
+  // anyway, but this is explicit in case that ever changes).
+  const [conversationId, setConversationId] = useState<string | null>(null);
+
   async function sendMessage(customQuestion?: string) {
     const userQuestion = customQuestion ?? question;
 
@@ -29,7 +37,7 @@ export default function ChatWindow() {
     setMessages((prev) => [
       ...prev,
       {
-        role: "user",   
+        role: "user",
         text: userQuestion,
       },
     ]);
@@ -39,7 +47,12 @@ export default function ChatWindow() {
     setLoading(true);
 
     try {
-      const response: ChatResponse = await askQuestion(userQuestion);
+      const response: ChatResponse = await askQuestion(
+        userQuestion,
+        conversationId,
+      );
+
+      setConversationId(response.conversation_id);
 
       setMessages((prev) => [
         ...prev,

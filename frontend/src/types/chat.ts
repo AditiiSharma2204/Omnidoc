@@ -18,4 +18,6 @@ export interface ChatResponse {
 
     sources: Source[];
 
+    conversation_id: string;
+
 }

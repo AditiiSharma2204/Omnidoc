@@ -35,9 +35,14 @@ class PromptBuilder:
         "Every factual sentence needs a bracket. A sentence with no "
         "bracket is treated as unsupported.\n\n"
         "Other rules:\n"
-        "1. Answer only using the supplied document context. Never invent facts.\n"
-        "2. If the answer is not present in the context, say exactly: "
-        "\"I couldn't find that information in the uploaded documents.\"\n"
+        "1. Answer only using the supplied document context and/or the "
+        "earlier conversation turns above (if any). Never invent facts "
+        "beyond what's in either of those.\n"
+        "2. If the answer is not present in the context AND not in the "
+        "earlier conversation, say exactly: \"I couldn't find that "
+        "information in the uploaded documents.\" Do not refuse just "
+        "because the current context alone doesn't have it -- check "
+        "the earlier conversation first.\n"
         "3. Section headings organize the context; they are not answers "
         "themselves unless the question is literally about document structure.\n"
         "4. When multiple context passages describe the same thing, combine "
@@ -46,7 +51,10 @@ class PromptBuilder:
         "6. Keep answers concise, factual and well formatted (use lists or "
         "short paragraphs where that helps readability) -- every list item "
         "still needs its own [N] bracket.\n"
-        "7. Do not cite a context number you did not actually use."
+        "7. Do not cite a context number you did not actually use. A fact "
+        "you're repeating from earlier conversation (not from the current "
+        "context) doesn't need a new [N] -- it was already cited when "
+        "first stated."
     )
 
     CITATION_REMINDER = (
@@ -72,13 +80,24 @@ class PromptBuilder:
 
         if not retrieved_chunks:
             # Nothing relevant was retrieved. Tell the model there is
-            # no context instead of sending an empty context block,
-            # which otherwise invites the model to answer from its
-            # own (unverifiable) knowledge.
+            # no NEW document context instead of sending an empty
+            # context block, which otherwise invites the model to
+            # answer from its own (unverifiable) knowledge. Still
+            # allow answering from earlier conversation turns (passed
+            # separately as real chat history, not part of this
+            # string) -- an earlier version of this message flatly
+            # commanded the refusal text regardless of history, which
+            # made a trivial "what did you just say" follow-up refuse
+            # even when the answer was sitting right there in the
+            # previous turn.
             user = (
-                f"No document context was found for this question.\n\n"
+                f"No new document context was found for this specific "
+                f"question.\n\n"
                 f"QUESTION:\n{question}\n\n"
-                f"Respond with: \"{cls.NO_CONTEXT_MESSAGE}\""
+                f"If the earlier conversation above already answers "
+                f"this, answer from that (no new [N] citation needed "
+                f"for a fact you're just repeating). Otherwise, "
+                f"respond with exactly: \"{cls.NO_CONTEXT_MESSAGE}\""
             )
             return cls.SYSTEM_PROMPT, user, []
 

@@ -1,5 +1,6 @@
 from app.prompts.prompt_builder import PromptBuilder
 from app.services.citation_service import CitationService
+from app.services.conversation_service import ConversationService
 from app.services.llm_service import LLMService
 from app.services.retrieval_service import RetrievalService
 
@@ -15,10 +16,28 @@ class ChatService:
         question: str,
         top_k: int = 5,
         document_ids: list[str] | None = None,
+        conversation_id: str | None = None,
     ):
         """
         Normal (non-streaming) chat.
+
+        Retrieval runs on the raw `question` only, with or without a
+        conversation -- condensing a follow-up like "what about her
+        second job?" into a standalone retrieval query is a separate,
+        not-yet-built piece (query rewriting for follow-ups, distinct
+        from the HyDE query_rewrite feature already on RetrievalService).
+        Conversation memory here only makes *generation* aware of
+        prior turns: history is fetched before this question is
+        answered and included as real chat turns, so the model can
+        naturally reference what it already said.
         """
+
+        conversation_id = ConversationService.get_or_create(
+            conversation_id
+        )
+        history = ConversationService.get_recent_messages(
+            conversation_id
+        )
 
         retrieved_chunks = RetrievalService.search(
             query=question,
@@ -31,13 +50,26 @@ class ChatService:
             retrieved_chunks=retrieved_chunks,
         )
 
-        answer = LLMService.generate(system=system, user=user)
+        answer = LLMService.generate(
+            system=system, user=user, history=history
+        )
 
         sources = cls._build_sources(answer, contexts)
+
+        ConversationService.add_message(
+            conversation_id, role="user", content=question
+        )
+        ConversationService.add_message(
+            conversation_id,
+            role="assistant",
+            content=answer,
+            sources=sources,
+        )
 
         return {
             "answer": answer,
             "sources": sources,
+            "conversation_id": conversation_id,
         }
 
     @staticmethod
@@ -72,6 +104,7 @@ class ChatService:
         question: str,
         top_k: int = 5,
         document_ids: list[str] | None = None,
+        conversation_id: str | None = None,
     ):
         """
         Streaming chat.
@@ -79,11 +112,19 @@ class ChatService:
         Note: sources/citations aren't available here the way they
         are in `chat()` -- the caller only gets a token stream, with
         no way to attach the sources list once generation finishes.
-        Wiring citations into the streaming response is tracked
-        alongside "wire up streaming to the frontend" on the roadmap;
-        both need the same change (a structured SSE response with a
-        final sources event, not a bare text stream).
+        Wiring citations (and persisting the turn to conversation
+        history) into the streaming response is tracked alongside
+        "wire up streaming to the frontend" on the roadmap; both need
+        the same change (a structured SSE response with a final
+        sources event, not a bare text stream).
         """
+
+        history = (
+            ConversationService.get_recent_messages(conversation_id)
+            if conversation_id
+            and ConversationService.conversation_exists(conversation_id)
+            else []
+        )
 
         retrieved_chunks = RetrievalService.search(
             query=question,
@@ -96,4 +137,4 @@ class ChatService:
             retrieved_chunks=retrieved_chunks,
         )
 
-        return LLMService.stream(system=system, user=user)
+        return LLMService.stream(system=system, user=user, history=history)

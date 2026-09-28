@@ -46,9 +46,22 @@ class LLMService:
         }
 
     @classmethod
-    def _messages(cls, system: str, user: str) -> list[dict]:
+    def _messages(
+        cls,
+        system: str,
+        user: str,
+        history: list[dict] | None = None,
+    ) -> list[dict]:
+        """
+        `history` (if given) is a list of {"role", "content"} dicts --
+        prior conversation turns, oldest first -- inserted as real
+        chat turns between the system prompt and the new user turn,
+        not stuffed into the user text. This lets the model naturally
+        reference what it already said this conversation.
+        """
         return [
             {"role": "system", "content": system},
+            *(history or []),
             {"role": "user", "content": user},
         ]
 
@@ -87,11 +100,12 @@ class LLMService:
         system: str,
         user: str,
         temperature: float = None,
+        history: list[dict] | None = None,
     ) -> str:
 
         payload = {
             "model": settings.LLM_MODEL_NAME,
-            "messages": cls._messages(system, user),
+            "messages": cls._messages(system, user, history),
             "options": cls._options(
                 settings.LLM_TEMPERATURE
                 if temperature is None
@@ -140,6 +154,7 @@ class LLMService:
         system: str,
         user: str,
         temperature: float = None,
+        history: list[dict] | None = None,
     ):
         """
         Stream tokens from Ollama.
@@ -149,7 +164,7 @@ class LLMService:
             f"{settings.OLLAMA_BASE_URL}/api/chat",
             json={
                 "model": settings.LLM_MODEL_NAME,
-                "messages": cls._messages(system, user),
+                "messages": cls._messages(system, user, history),
                 "options": cls._options(
                     settings.LLM_TEMPERATURE
                     if temperature is None

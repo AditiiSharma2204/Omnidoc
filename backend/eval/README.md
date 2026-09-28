@@ -229,6 +229,49 @@ doesn't affect which source gets credited, so left as a known,
 low-priority polish item rather than over-engineering the prompt
 further for a formatting detail.
 
+## Conversation memory — live-verified, and it caught a real bug
+
+`ConversationService` persists every turn to SQLite and
+`ChatService.chat()` feeds the last 6 messages back to the LLM as real
+chat turns. Mocked tests (27 of them) all passed before this was ever
+run against a real model -- they couldn't catch what the live test
+did.
+
+**First live test: a hard regression.** Turn 1: *"What internships
+did this person do?"* → correct, cited answer. Turn 2 (same
+conversation): *"Of the two internships you just listed, which one
+came second?"* → the model **refused**, with `NO_CONTEXT_MESSAGE`,
+despite the answer sitting in its own immediately-preceding turn.
+
+**Root cause:** the system prompt's rule 1 said "answer only using the
+supplied document context" -- true of the *current* retrieval, but the
+model read it as excluding conversation history entirely, and rule 2's
+refusal instruction was phrased as an unconditional command with no
+carve-out for "check history first." Confirmed this wasn't a retrieval
+problem: the turn 2 query *did* retrieve 5 chunks (non-empty), just
+irrelevant ones (from an unrelated PDF in the corpus) -- the model had
+correct grounds to distrust the current retrieval, it just also
+distrusted its own valid prior answer for no good reason.
+
+**Fix:** rewrote rules 1 and 2 to explicitly authorize answering from
+earlier conversation turns, and softened the no-new-context branch's
+hardcoded refusal command into a conditional one ("if the earlier
+conversation already answers this, use that; otherwise refuse").
+Re-tested the identical scenario: the model now answers *"...[2] came
+second"* -- correct, uses history, no refusal. One remaining rough
+edge: the answer re-states the entire prior turn instead of just the
+new part (verbose, not wrong) -- a real but minor polish item.
+
+**What this validates about the eval-then-fix discipline used all
+sprint:** the bug was invisible to 27 passing unit tests because unit
+tests exercise the *mechanism* (does history get fetched, formatted,
+and passed to the LLM call correctly) -- they can't catch "the LLM
+ignores an instruction it was technically given." Only a real model
+call surfaced it. This is the same lesson as the citation rule-#7
+finding above, twice now: shipping a feature's plumbing correctly and
+shipping a feature that actually works for the user are different
+claims, and only one of them is testable without a live model.
+
 ## A real bug found getting this far: Ollama vs. PyTorch on this machine
 
 Every earlier attempt at this generation run failed with the same

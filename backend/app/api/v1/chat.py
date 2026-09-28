@@ -1,8 +1,14 @@
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.schemas.chat import ChatRequest, ChatResponse
+from app.core.exceptions import ConversationNotFoundException
+from app.schemas.chat import (
+    ChatRequest,
+    ChatResponse,
+    ConversationHistoryResponse,
+)
 from app.services.chat_service import ChatService
+from app.services.conversation_service import ConversationService
 
 router = APIRouter()
 
@@ -17,6 +23,7 @@ def chat(request: ChatRequest):
         question=request.question,
         top_k=request.top_k,
         document_ids=request.document_ids,
+        conversation_id=request.conversation_id,
     )
 
 
@@ -29,9 +36,25 @@ def chat_stream(request: ChatRequest):
         question=request.question,
         top_k=request.top_k,
         document_ids=request.document_ids,
+        conversation_id=request.conversation_id,
     )
 
     return StreamingResponse(
         generator,
         media_type="text/plain",
+    )
+
+
+@router.get(
+    "/conversations/{conversation_id}",
+    response_model=ConversationHistoryResponse,
+)
+def get_conversation(conversation_id: str):
+
+    if not ConversationService.conversation_exists(conversation_id):
+        raise ConversationNotFoundException(conversation_id)
+
+    return ConversationHistoryResponse(
+        conversation_id=conversation_id,
+        messages=ConversationService.get_full_history(conversation_id),
     )

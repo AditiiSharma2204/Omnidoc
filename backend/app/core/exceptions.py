@@ -31,3 +31,11 @@ class DocumentNotFoundException(HTTPException):
             status_code=404,
             detail=f"Document '{document_id}' not found."
         )
+
+
+class ConversationNotFoundException(HTTPException):
+    def __init__(self, conversation_id: str):
+        super().__init__(
+            status_code=404,
+            detail=f"Conversation '{conversation_id}' not found."
+        )

@@ -20,9 +20,11 @@ React (Vite/TS)  →  FastAPI  →  Docling (parse)  →  Chunker  →  BGE-M3 (
                                                       ↓
                                     Cross-encoder reranker (top candidates)
                                                       ↓
-                                       Prompt Builder → Qwen2.5 (Ollama)
+                        SQLite (conversation history) → Prompt Builder → Qwen2.5 (Ollama)
                                                       ↓
-                                                   Answer + sources
+                                     Answer + sources + conversation_id
+                                                      ↓
+                                    SQLite (persist this turn)
 ```
 
 - **Parsing** — [Docling](https://github.com/docling-project/docling) converts PDF/DOCX/PPTX/XLSX to markdown.
@@ -30,8 +32,8 @@ React (Vite/TS)  →  FastAPI  →  Docling (parse)  →  Chunker  →  BGE-M3 (
 - **Retrieval** — hybrid by default: FAISS (dense, BGE-M3) + BM25 (lexical), fused with Reciprocal Rank Fusion, then re-scored by a cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`). Optional HyDE-style query rewriting exists but is off by default — measured to give zero quality gain while doubling latency on this corpus (see `backend/eval/README.md`). A reranker-score refusal threshold (`RERANK_SCORE_THRESHOLD`) can drop weak matches before they reach the LLM at all — implemented and unit-tested, off by default pending real score calibration. Each stage is independently toggleable via settings (`RETRIEVAL_MODE`, `RERANK_ENABLED`, `QUERY_REWRITE_ENABLED`, `RERANK_SCORE_THRESHOLD`).
 - **Embeddings** — [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) via `sentence-transformers`.
 - **Vector store** — FAISS (`IndexFlatIP`, cosine similarity via L2-normalized vectors).
-- **Metadata** — SQLite (`storage/app.db`), replacing the original per-document JSON files. A one-time, idempotent startup migration imports any pre-existing `metadata.json` files. Schema also reserves `conversations`/`messages` tables for the upcoming conversation-memory feature (not yet wired to any endpoint).
-- **Generation** — [Ollama](https://ollama.com) running `qwen2.5:3b` locally, instructed to cite sources inline as `[1]`, `[2]`, etc. matching the prompt's context numbering. `ChatService` parses those markers and returns a `sources` list whose `index` fields line up exactly with them, each flagged `cited: true/false` — an out-of-range or hallucinated citation number simply matches nothing, rather than crashing or silently mapping to the wrong source. Live-verified: the model selectively cites the right sources and omits irrelevant ones (see `backend/eval/README.md`).
+- **Metadata & conversations** — SQLite (`storage/app.db`), replacing the original per-document JSON files. A one-time, idempotent startup migration imports any pre-existing `metadata.json` files. `ConversationService` persists every chat turn and feeds the last 6 messages back to the LLM as real chat history on the next turn (`POST /chat` accepts/returns `conversation_id`; `GET /conversations/{id}` fetches full history).
+- **Generation** — [Ollama](https://ollama.com) running `qwen2.5:3b` locally, instructed to cite sources inline as `[1]`, `[2]`, etc. matching the prompt's context numbering, and to answer from conversation history when the current retrieval alone doesn't have it. `ChatService` parses citation markers and returns a `sources` list whose `index` fields line up exactly with them, each flagged `cited: true/false` — an out-of-range or hallucinated citation number simply matches nothing, rather than crashing or silently mapping to the wrong source. Both citations and conversation memory are live-verified against the real model, including one real bug each found and fixed during that verification (see `backend/eval/README.md` and the conversation-memory limitation below).
 
 ## Setup
 
@@ -119,8 +121,31 @@ This section is deliberately blunt — see it as the project's honest changelog.
   cosmetic, doesn't affect which source is credited.
 - **No OCR fallback** — scanned (image-only) PDFs will parse to near-empty text.
 - **No table/chart/image understanding** — Docling extracts tables as markdown text; nothing structures or reasons over them specially yet.
-- **No conversation memory** — each question is answered independently of chat history.
-- **No persistent chat history** — refreshing the page loses the conversation.
+- **Conversation memory: real, live-verified, and caught a real bug during
+  verification.** `ChatService` persists every turn to SQLite and includes
+  the last 6 messages as real chat turns for generation. First live test
+  showed a *hard* regression the mocked tests couldn't catch: the model
+  refused a trivial follow-up ("which one came second?") that was
+  answerable from its own immediately-preceding answer, because the
+  system prompt's "answer only from document context" rule read as
+  excluding conversation history entirely. Fixed by explicitly
+  authorizing the model to answer from earlier turns, not just the
+  current retrieval. Re-tested: it now correctly answers from history
+  (`"[2] came second"` — factually correct) rather than refusing, though
+  the response is more verbose than ideal (re-states the whole prior
+  answer instead of just the new part) — a real but minor polish item,
+  not a correctness one. Retrieval itself still runs on the raw current
+  question only; a follow-up needing *new* document lookup (not just
+  recalling what was already said) can still miss if it doesn't share
+  vocabulary with the target chunk — condensing follow-ups into
+  standalone retrieval queries is a distinct, not-yet-built piece (see
+  roadmap).
+- **No persistent chat history across page reloads.** Conversation state
+  lives in SQLite server-side (survives a backend restart) and is
+  addressable via `GET /api/v1/conversations/{id}`, but the frontend
+  doesn't yet store the current `conversation_id` anywhere durable —
+  refreshing the page starts a new conversation client-side even though
+  the old one is still in the database.
 - **No auth, no multi-user support.**
 - **Memory-constrained by design.** This targets modest hardware (built against
   an NVIDIA MX450, 2GB VRAM). Ollama, Docling's parsing models, the BGE-M3
@@ -179,12 +204,15 @@ This section is deliberately blunt — see it as the project's honest changelog.
 
 ## Roadmap
 
-Short-term priorities, roughly in order: calibrate the refusal
-threshold against real reranker scores; conversation memory (schema
-already in place); streaming + markdown rendering in the UI; a
-document-scoped retrieval eval alongside the current global one (the
-corpus-crowding finding in `backend/eval/README.md`); grow the
-evaluation dataset past 50 questions (contracts/legal documents,
-adversarial content); page-level citation highlighting (jump to the
-cited PDF page, not just show the source card); and a Docker Compose
-setup that works from a clean clone.
+Short-term priorities, roughly in order: query rewriting for
+follow-ups (condense "what about the second one?" into a standalone
+retrieval query, distinct from the HyDE feature — see the conversation-
+memory limitation above); persist `conversation_id` client-side so a
+page reload doesn't lose the active conversation; calibrate the
+refusal threshold against real reranker scores; streaming + markdown
+rendering in the UI; a document-scoped retrieval eval alongside the
+current global one (the corpus-crowding finding in
+`backend/eval/README.md`); grow the evaluation dataset past 50
+questions (contracts/legal documents, adversarial content); page-level
+citation highlighting (jump to the cited PDF page, not just show the
+source card); and a Docker Compose setup that works from a clean clone.
